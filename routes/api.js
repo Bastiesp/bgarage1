@@ -60,18 +60,41 @@ async function upsertReminderFromRepair(repairId){
     { upsert: true, new: true, setDefaultsOnInsert: true }
   );
 }
+function escapeRegex(value){ return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+async function findVehicleForOilCard(oil){
+  if(!oil) return null;
+  if(oil.vehicle){
+    const byId = await Vehicle.findById(oil.vehicle);
+    if(byId) return byId;
+  }
+  const owner = String(oil.ownerName || '').trim();
+  const brand = String(oil.brand || '').trim();
+  const model = String(oil.model || '').trim();
+  const candidates = [];
+  if(owner && brand && model) candidates.push({ ownerName: new RegExp('^' + escapeRegex(owner) + '$', 'i'), brand: new RegExp(escapeRegex(brand), 'i'), model: new RegExp(escapeRegex(model), 'i') });
+  if(owner && brand) candidates.push({ ownerName: new RegExp('^' + escapeRegex(owner) + '$', 'i'), brand: new RegExp(escapeRegex(brand), 'i') });
+  if(owner) candidates.push({ ownerName: new RegExp('^' + escapeRegex(owner) + '$', 'i') });
+  for(const query of candidates){
+    const vehicle = await Vehicle.findOne(query);
+    if(vehicle) return vehicle;
+  }
+  return null;
+}
 async function upsertReminderFromOilCard(oilCardId){
   const oil = await OilCard.findById(oilCardId);
   if(!oil) return;
-  let vehicle = await Vehicle.findOne({
-    ownerName: new RegExp('^' + String(oil.ownerName || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i')
-  });
+  const vehicle = await findVehicleForOilCard(oil);
   if(!vehicle) return;
+  if(!oil.vehicle){ oil.vehicle = vehicle._id; await oil.save(); }
   await ServiceReminder.findOneAndUpdate(
     { oilCard: oil._id, source: 'oil' },
     { vehicle: vehicle._id, oilCard: oil._id, source: 'oil', serviceType: 'Cambio de aceite', summary: `Cambio de aceite ${oil.oilUsed || ''}`.trim(), dueDate: addMonths(oil.date || oil.createdAt || new Date(), 6), dueKm: oil.nextKm, status: 'pendiente' },
     { upsert: true, new: true, setDefaultsOnInsert: true }
   );
+}
+async function ensureOilCardReminders(){
+  const oilCards = await OilCard.find().sort({ createdAt: -1 }).limit(500);
+  for(const oil of oilCards){ await upsertReminderFromOilCard(oil._id); }
 }
 
 async function nextQuoteNumber() {
@@ -99,6 +122,7 @@ function calcRepairNumbers(data) {
 const crud = (Model) => ({
   list: asyncHandler(async (req, res) => {
     if (Model.modelName === 'Quote') await ensureExistingQuoteNumbers();
+    if (Model.modelName === 'ServiceReminder') await ensureOilCardReminders();
     const query = Model.find().sort({ createdAt: -1 }).limit(300);
     const docs = await maybePopulateVehicle(query, Model);
     res.json(docs);
@@ -130,7 +154,10 @@ const crud = (Model) => ({
   }),
 
   remove: asyncHandler(async (req, res) => {
-    await Model.findByIdAndDelete(req.params.id);
+    const doc = await Model.findByIdAndDelete(req.params.id);
+    if (!doc) return res.status(404).json({ error: 'No encontrado' });
+    if (Model.modelName === 'Repair') await ServiceReminder.deleteMany({ repair: req.params.id });
+    if (Model.modelName === 'OilCard') await ServiceReminder.deleteMany({ oilCard: req.params.id });
     res.json({ ok: true });
   })
 });
