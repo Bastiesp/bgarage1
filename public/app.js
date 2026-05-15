@@ -114,13 +114,13 @@ function carStatusIcon(status){
 function renderKanban(){
   const repairs = filterList(state.repairs, 'kanban', repairText);
   const cols = [['presupuestado','Presupuestados'], ['en_reparacion','En reparación'], ['entregado','Entregados']];
-  $('#content').innerHTML = `<div class="top"><h1>Kanban de reparaciones</h1><button onclick="repairForm()">+ Nuevo informe</button></div>${searchBox('kanban')}<div class="kanban">${cols.map(([key,title]) => `<div class="col"><h2>${title}</h2>${repairs.filter(r => r.status === key).map(r => `<div class="card kanban-card">${carStatusIcon(r.status)}<h3>${safe(r.vehicle?.plate || 'Sin patente')} · ${safe(r.title)}</h3><p>${safe(r.vehicle?.ownerName || '')}</p><p>${safe(r.vehicle?.brand || '')} ${safe(r.vehicle?.model || '')}</p><p class="muted">Semana: ${safe(r.week || '-')}</p><p class="status-line">${badge(r.status)} <span>Utilidad: <b>${money(r.profit)}</b></span></p><select onchange="moveRepair('${r._id}',this.value)"><option>mover a...</option><option value="presupuestado">Presupuestado</option><option value="en_reparacion">En reparación</option><option value="entregado">Entregado</option></select><button class="ghost" onclick="repairForm('${r._id}')">Ver / editar</button></div>`).join('')}</div>`).join('')}</div>`;
+  $('#content').innerHTML = `<div class="top"><h1>Kanban de reparaciones</h1><button onclick="repairForm()">+ Nuevo informe</button></div>${searchBox('kanban')}<div class="kanban">${cols.map(([key,title]) => `<div class="col"><h2>${title}</h2>${repairs.filter(r => r.status === key).map(r => `<div class="card kanban-card">${carStatusIcon(r.status)}<h3>${safe(r.vehicle?.plate || 'Sin patente')} · ${safe(r.title)}</h3><p>${safe(r.vehicle?.ownerName || '')}</p><p>${safe(r.vehicle?.brand || '')} ${safe(r.vehicle?.model || '')}</p><p class="muted">Fecha ingreso: ${dateCL(r.createdAt)}</p><p class="muted">Último movimiento: ${dateCL(r.statusChangedAt || r.updatedAt || r.createdAt)}</p><p class="status-line">${badge(r.status)} <span>Utilidad: <b>${money(r.profit)}</b></span></p><select onchange="moveRepair('${r._id}',this.value)"><option>mover a...</option><option value="presupuestado">Presupuestado</option><option value="en_reparacion">En reparación</option><option value="entregado">Entregado</option></select><button class="ghost" onclick="repairForm('${r._id}')">Ver / editar</button></div>`).join('')}</div>`).join('')}</div>`;
 }
-async function moveRepair(id,status){ if(!status || status === 'mover a...') return; await api('/repairs/' + id, { method:'PUT', body:JSON.stringify({status}) }); await loadAll(); renderKanban(); }
+async function moveRepair(id,status){ if(!status || status === 'mover a...') return; await api('/repairs/' + id, { method:'PUT', body:JSON.stringify({status, statusChangedAt:new Date().toISOString()}) }); await loadAll(); renderKanban(); }
 
 function renderQuotes(){
   const quotes = filterList(state.quotes, 'quotes', quoteText);
-  $('#content').innerHTML = `<div class="top"><h1>Presupuestos</h1><button onclick="quoteForm()">+ Presupuesto</button></div>${searchBox('quotes')}${table(quotes.map(q => [safe(q.ownerName), safe(q.vehicleLabel), badge(q.status), money(q.total), `<button onclick="quotePDF('${q._id}')">PDF</button> <button class="ghost" onclick="quoteForm('${q._id}')">Editar</button>`]), ['Cliente','Vehículo','Estado','Total',''])}`;
+  $('#content').innerHTML = `<div class="top"><h1>Presupuestos</h1><button onclick="quoteForm()">+ Presupuesto</button></div>${searchBox('quotes')}${table(quotes.map(q => [`N° ${quoteNumberDisplay(q)}`, safe(q.ownerName), safe(q.vehicleLabel), badge(q.status), money(q.total), `<button onclick="quotePDF('${q._id}')">PDF</button> <button class="ghost" onclick="quoteForm('${q._id}')">Editar</button>`]), ['N°','Cliente','Vehículo','Estado','Total',''])}`;
 }
 function quoteItemRow(description='', brief='', price=''){
   return `<div class="quote-item-row"><input name="itemDescription" placeholder="Item" value="${safe(description)}"><input name="itemBrief" placeholder="Breve descripción" value="${safe(brief)}"><input name="itemPrice" type="number" placeholder="Precio" value="${safe(price)}" oninput="recalcQuoteTotal()"><button type="button" class="ghost mini" onclick="this.closest('.quote-item-row').remove(); recalcQuoteTotal();">Quitar</button></div>`;
@@ -203,6 +203,12 @@ function photoForm(id){
 
 
 function dateCL(d){ return d ? new Date(d).toLocaleDateString('es-CL') : '-'; }
+function quoteNumberDisplay(q){
+  if(q?.quoteNumber) return Number(q.quoteNumber);
+  const sorted = [...state.quotes].sort((a,b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
+  const idx = sorted.findIndex(x => x._id === q?._id);
+  return 1032 + Math.max(0, idx);
+}
 function daysUntil(d){ if(!d) return null; return Math.ceil((new Date(d).setHours(0,0,0,0) - new Date().setHours(0,0,0,0)) / 86400000); }
 function serviceBadge(s){
   const d = daysUntil(s.dueDate);
@@ -237,7 +243,7 @@ function vehicleFicha(id){
     <div class="grid compact"><div class="card"><h3>Ingresos</h3><div class="stat">${money(totalIncome)}</div></div><div class="card"><h3>Costos</h3><div class="stat">${money(totalCost)}</div></div><div class="card"><h3>Utilidad</h3><div class="stat">${money(totalProfit)}</div></div></div>
     <h3>Próximos servicios</h3>${table(rel.services.map(s => [safe(s.serviceType), dateCL(s.dueDate), safe(s.dueKm || ''), serviceBadge(s), whatsappButton(v,'service',s)]), ['Servicio','Fecha','KM','Estado','WhatsApp'])}
     <h3>Historial de reparaciones</h3>${table(rel.repairs.map(r => [dateCL(r.deliveredAt || r.createdAt), safe(r.title), badge(r.status), money(r.totalCharged), money(r.totalCost), money(r.profit), `<button onclick="repairPDF('${r._id}')">PDF</button>`]), ['Fecha','Trabajo','Estado','Cobrado','Costo','Utilidad',''])}
-    <h3>Presupuestos</h3>${table(rel.quotes.map(q => [dateCL(q.createdAt), safe(q.vehicleLabel), badge(q.status), money(q.total), `<button onclick="quotePDF('${q._id}')">PDF</button>`]), ['Fecha','Vehículo','Estado','Total',''])}
+    <h3>Presupuestos</h3>${table(rel.quotes.map(q => [dateCL(q.createdAt), `N° ${quoteNumberDisplay(q)}`, safe(q.vehicleLabel), badge(q.status), money(q.total), `<button onclick="quotePDF('${q._id}')">PDF</button>`]), ['Fecha','N°','Vehículo','Estado','Total',''])}
     <h3>Tarjetas aceite</h3>${table(rel.oil.map(o => [dateCL(o.date || o.createdAt), safe(o.oilUsed), safe(o.currentKm), safe(o.nextKm), `<button onclick="oilPDF('${o._id}')">PDF</button>`]), ['Fecha','Aceite','KM actual','Próximo KM',''])}
     <h3>Fotos de respaldo</h3><div class="photo-row">${photos.length ? photos.map(p => `<a href="${safe(p.url)}" target="_blank"><img src="${safe(p.url)}" title="${safe(p.repairTitle)}"></a>`).join('') : '<p class="muted">Sin fotos registradas.</p>'}</div>
     <div class="actions"><button type="button" class="ghost" onclick="closeModal()">Cerrar</button></div>`);
@@ -326,8 +332,10 @@ function pdfFooter(doc){
   doc.setTextColor(20,20,20); doc.setFont(undefined,'bold'); doc.text('BGarage',196,h-16,{align:'right'}); doc.setFont(undefined,'normal');
 }
 function pdfSection(doc,icon,title,y){
-  doc.setFillColor(246,251,252); doc.setDrawColor(210,232,236); doc.roundedRect(14,y,182,12,3,3,'FD');
-  doc.setTextColor(9,102,113); doc.setFont(undefined,'bold'); doc.setFontSize(12); doc.text(`${icon}  ${title}`,20,y+7.7); doc.setFont(undefined,'normal');
+  doc.setTextColor(20,30,35); doc.setFont(undefined,'bold'); doc.setFontSize(12.5);
+  doc.text(title,16,y+6);
+  doc.setDrawColor(25,184,200); doc.setLineWidth(0.8); doc.line(16,y+9,96,y+9);
+  doc.setFont(undefined,'normal'); doc.setLineWidth(0.2);
   return y + 17;
 }
 function ensurePage(doc,y,title='Continuación'){ if(y > 265){ pdfFooter(doc); doc.addPage(); pdfHeader(doc,title); return 43; } return y; }
@@ -347,11 +355,12 @@ function quoteTableHeader(doc,y){
 }
 
 function quotePDF(id){
-  const q = state.quotes.find(x => x._id === id); const doc = pdfBase('Presupuesto de reparación'); let y = 44;
-  doc.setFontSize(10); doc.setTextColor(70,80,84); doc.text('Documento técnico-comercial emitido por BGarage para revisión y aprobación del cliente.',14,y); y += 8;
+  const q = state.quotes.find(x => x._id === id); const num = quoteNumberDisplay(q); const doc = pdfBase('Presupuesto de reparación'); let y = 44;
+  doc.setFontSize(10); doc.setTextColor(70,80,84); doc.text(`Presupuesto N° ${num} · Documento técnico-comercial emitido por BGarage para revisión y aprobación del cliente.`,14,y); y += 8;
   y = pdfSection(doc,'👤','Datos del cliente y vehículo',y);
   y = pdfInfoRow(doc,'Cliente', q.ownerName || '', y);
   y = pdfInfoRow(doc,'Vehículo', q.vehicleLabel || '', y);
+  y = pdfInfoRow(doc,'N° presupuesto', num, y);
   y = pdfInfoRow(doc,'Fecha', new Date(q.createdAt || Date.now()).toLocaleDateString('es-CL'), y);
   y += 3; y = pdfSection(doc,'🧾','Detalle del presupuesto',y);
   y = quoteTableHeader(doc,y);
@@ -369,25 +378,39 @@ function quotePDF(id){
   y += 4; doc.setFillColor(25,184,200); doc.roundedRect(116,y,78,18,4,4,'F'); doc.setTextColor(255,255,255); doc.setFont(undefined,'bold'); doc.setFontSize(16); doc.text(`TOTAL ${money(q.total)}`,188,y+12,{align:'right'}); doc.setFont(undefined,'normal');
   y += 30; if(y > 255){ pdfFooter(doc); doc.addPage(); pdfHeader(doc,'Presupuesto de reparación'); y = 54; }
   doc.setDrawColor(150,180,185); doc.line(126,y,190,y); doc.setTextColor(9,102,113); doc.setFont(undefined,'bold'); doc.setFontSize(10); doc.text('Bastian Espinoza',158,y+7,{align:'center'}); doc.setFont(undefined,'normal'); doc.setFontSize(9); doc.text('Responsable BGarage',158,y+12,{align:'center'});
-  pdfFooter(doc); doc.save(`presupuesto-bgarage-${q.ownerName || 'cliente'}.pdf`);
+  pdfFooter(doc); doc.save(`presupuesto-bgarage-${num}-${q.ownerName || 'cliente'}.pdf`);
 }
 
 function oilPDF(id){
   const o = state.oil.find(x => x._id === id); const { jsPDF } = window.jspdf; const doc = new jsPDF({ orientation:'landscape', unit:'mm', format:'a5' });
-  doc.setFillColor(236,246,247); doc.rect(0,0,210,148,'F');
-  doc.setFillColor(255,255,255); doc.setDrawColor(20,20,20); doc.setLineWidth(.9); doc.roundedRect(12,10,186,128,7,7,'FD');
-  doc.setFillColor(9,102,113); doc.roundedRect(12,10,186,39,7,7,'F');
-  doc.setTextColor(255,255,255); doc.setFont(undefined,'bold'); doc.setFontSize(31); doc.text('BGarage',105,25,{align:'center'});
-  doc.setFontSize(12.5); doc.text('TARJETA DE CAMBIO DE ACEITE',105,38,{align:'center'});
-  drawOilIcon(doc,25,16,.68,[255,255,255]); drawOilIcon(doc,158,16,.68,[255,255,255]);
-  doc.setDrawColor(215,225,228); doc.setLineWidth(.4);
-  doc.setFillColor(248,252,253); doc.roundedRect(22,58,166,49,5,5,'FD');
-  doc.setTextColor(9,102,113); doc.setFont(undefined,'bold'); doc.setFontSize(8.5);
-  const fields = [ ['PROPIETARIO',o.ownerName||''], ['VEHÍCULO',`${o.brand||''} ${o.model||''} ${o.year||''}`.trim()], ['KM ACTUAL',o.currentKm||''], ['PRÓXIMO CAMBIO',o.nextKm||''], ['ACEITE USADO',o.oilUsed||''], ['FECHA',new Date(o.date || Date.now()).toLocaleDateString('es-CL')] ];
-  let y = 70; fields.forEach((f,idx) => { const x = idx % 2 ? 109 : 31; if(idx > 0 && idx % 2 === 0) y += 16; doc.setTextColor(9,102,113); doc.setFont(undefined,'bold'); doc.text(f[0],x,y); doc.setDrawColor(215,225,228); doc.line(x,y+2,x+65,y+2); doc.setTextColor(25,35,40); doc.setFont(undefined,'normal'); doc.setFontSize(10); doc.text(String(f[1]),x,y+8); doc.setFontSize(8.5); });
-  if(o.notes){ doc.setFontSize(8); doc.setTextColor(70,80,84); doc.text(doc.splitTextToSize('Notas: ' + o.notes,150),30,114); }
-  doc.setTextColor(20,20,20); doc.setFont(undefined,'bold'); doc.setFontSize(12); doc.text('SERVICIO CERTIFICADO',31,127);
-  doc.setFont(undefined,'normal'); doc.setFontSize(10.5); doc.text('Bastian Espinoza',188,122,{align:'right'}); doc.text('+56959355607',188,129,{align:'right'});
+  doc.setFillColor(239,247,248); doc.rect(0,0,210,148,'F');
+  doc.setFillColor(255,255,255); doc.setDrawColor(205,220,224); doc.setLineWidth(.8); doc.roundedRect(10,9,190,130,8,8,'FD');
+  doc.setFillColor(255,255,255); doc.roundedRect(16,15,178,118,6,6,'F');
+  doc.setFillColor(9,102,113); doc.roundedRect(16,15,178,35,6,6,'F');
+  drawOilIcon(doc,27,18,.62,[255,255,255]);
+  doc.setTextColor(255,255,255); doc.setFont(undefined,'bold'); doc.setFontSize(29); doc.text('BGarage',105,29,{align:'center'});
+  doc.setFontSize(12); doc.setFont(undefined,'normal'); doc.text('TARJETA DE CAMBIO DE ACEITE',105,42,{align:'center'});
+  doc.setDrawColor(25,184,200); doc.setLineWidth(1.2); doc.line(45,53,165,53);
+  const fields = [
+    ['PROPIETARIO',o.ownerName||''],
+    ['VEHÍCULO',`${o.brand||''} ${o.model||''} ${o.year||''}`.trim()],
+    ['KM ACTUAL',o.currentKm||''],
+    ['PRÓXIMO CAMBIO',o.nextKm||''],
+    ['ACEITE USADO',o.oilUsed||''],
+    ['FECHA',new Date(o.date || Date.now()).toLocaleDateString('es-CL')]
+  ];
+  const positions = [[22,62],[108,62],[22,82],[108,82],[22,102],[108,102]];
+  fields.forEach((f,idx) => {
+    const [x,y] = positions[idx];
+    doc.setFillColor(248,252,253); doc.setDrawColor(218,230,233); doc.setLineWidth(.35); doc.roundedRect(x,y,78,15,3,3,'FD');
+    doc.setTextColor(9,102,113); doc.setFont(undefined,'bold'); doc.setFontSize(7.5); doc.text(f[0],x+4,y+5);
+    doc.setTextColor(25,35,40); doc.setFont(undefined,'bold'); doc.setFontSize(10.5);
+    const valueLines = doc.splitTextToSize(String(f[1] || '-'), 68);
+    doc.text(valueLines.slice(0,1),x+4,y+11);
+  });
+  if(o.notes){ doc.setFont(undefined,'normal'); doc.setFontSize(7.5); doc.setTextColor(70,80,84); doc.text(doc.splitTextToSize('Notas: ' + o.notes,150),22,122); }
+  doc.setTextColor(20,20,20); doc.setFont(undefined,'bold'); doc.setFontSize(11.5); doc.text('SERVICIO CERTIFICADO',22,130);
+  doc.setFont(undefined,'normal'); doc.setFontSize(9.5); doc.text('Bastian Espinoza · +56959355607',188,130,{align:'right'});
   doc.save('tarjeta-cambio-aceite-bgarage.pdf');
 }
 
