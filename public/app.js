@@ -7,8 +7,8 @@ const money = n => '$' + Number(n || 0).toLocaleString('es-CL');
 const safe = v => String(v ?? '').replace(/[&<>"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]));
 const norm = v => String(v || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
 
-let state = { vehicles:[], repairs:[], quotes:[], oil:[], summary:null };
-let filters = { dashboard:'', kanban:'', vehicles:'', quotes:'', oil:'', repairs:'', commercial:'' };
+let state = { vehicles:[], repairs:[], quotes:[], oil:[], services:[], summary:null };
+let filters = { dashboard:'', kanban:'', vehicles:'', quotes:'', oil:'', repairs:'', fichas:'', services:'', commercial:'' };
 
 const api = async (url, opts={}) => {
   const r = await fetch('/api' + url, {
@@ -26,10 +26,10 @@ const api = async (url, opts={}) => {
 const showError = (e) => { console.error(e); alert(e.message || 'Ocurrió un error. Revisa los logs.'); };
 
 async function loadAll(){
-  const [vehicles, repairs, quotes, oil, summary] = await Promise.all([
-    api('/vehicles'), api('/repairs'), api('/quotes'), api('/oil-cards'), api('/dashboard/summary')
+  const [vehicles, repairs, quotes, oil, services, summary] = await Promise.all([
+    api('/vehicles'), api('/repairs'), api('/quotes'), api('/oil-cards'), api('/service-reminders'), api('/dashboard/summary')
   ]);
-  state = { vehicles, repairs, quotes, oil, summary };
+  state = { vehicles, repairs, quotes, oil, services, summary };
 }
 
 function logout(){ localStorage.clear(); location.href='/login.html'; }
@@ -55,6 +55,7 @@ function vehicleText(v){ return norm([v?.ownerName, v?.ownerPhone, v?.ownerEmail
 function repairText(r){ return norm([r?.title, r?.status, r?.week, r?.vehicle?.ownerName, r?.vehicle?.plate, r?.vehicle?.brand, r?.vehicle?.model, r?.vehicle?.ownerPhone, r?.diagnosis, r?.workDone].join(' ')); }
 function quoteText(q){ return norm([q?.ownerName, q?.vehicleLabel, ...(q?.items || []).map(i => i.description)].join(' ')); }
 function oilText(o){ return norm([o?.ownerName, o?.brand, o?.model, o?.year, o?.currentKm, o?.nextKm, o?.oilUsed].join(' ')); }
+function serviceText(x){ return norm([x?.serviceType, x?.summary, x?.status, x?.vehicle?.ownerName, x?.vehicle?.ownerPhone, x?.vehicle?.plate, x?.vehicle?.brand, x?.vehicle?.model, x?.dueKm, x?.notes].join(' ')); }
 function filterList(list, view, fn){ const q = norm(filters[view]); return q ? list.filter(x => fn(x).includes(q)) : list; }
 
 async function render(view='dashboard'){
@@ -64,6 +65,8 @@ async function render(view='dashboard'){
   if(view === 'quotes') return renderQuotes();
   if(view === 'oil') return renderOil();
   if(view === 'repairs') return renderRepairs();
+  if(view === 'fichas') return renderFichas();
+  if(view === 'services') return renderServices();
   if(view === 'commercial') return renderCommercial();
 }
 
@@ -85,7 +88,7 @@ function renderDashboard(){
 
 function renderVehicles(){
   const vehicles = filterList(state.vehicles, 'vehicles', vehicleText);
-  $('#content').innerHTML = `<div class="top"><h1>Vehículos / Clientes</h1><button onclick="vehicleForm()">+ Nuevo vehículo</button></div>${searchBox('vehicles')}${table(vehicles.map(v => [safe(v.ownerName), safe(v.ownerPhone || ''), safe(v.plate || ''), `${safe(v.brand || '')} ${safe(v.model || '')}`, safe(v.year || ''), safe(v.currentKm || ''), `<button class="ghost" onclick="vehicleForm('${v._id}')">Editar</button>`]), ['Propietario','Teléfono','Patente','Vehículo','Año','KM',''])}`;
+  $('#content').innerHTML = `<div class="top"><h1>Vehículos / Clientes</h1><button onclick="vehicleForm()">+ Nuevo vehículo</button></div>${searchBox('vehicles')}${table(vehicles.map(v => [safe(v.ownerName), safe(v.ownerPhone || ''), safe(v.plate || ''), `${safe(v.brand || '')} ${safe(v.model || '')}`, safe(v.year || ''), safe(v.currentKm || ''), `<button class="ghost" onclick="vehicleFicha('${v._id}')">Ficha</button> <button class="ghost" onclick="vehicleForm('${v._id}')">Editar</button>`]), ['Propietario','Teléfono','Patente','Vehículo','Año','KM',''])}`;
 }
 function vehicleForm(id){
   const v = state.vehicles.find(x => x._id === id) || {};
@@ -196,6 +199,83 @@ function repairForm(id){
 function photoForm(id){
   openModal(`<h2>Subir fotos comprimidas</h2><p class="muted">Se comprimen en el servidor antes de Cloudinary.</p><form id="pf"><input type="file" name="photos" accept="image/*" multiple><div class="actions"><button>Subir</button><button type="button" class="ghost" onclick="closeModal()">Cerrar</button></div></form>`);
   $('#pf').onsubmit = async e => { e.preventDefault(); try{ const fd = new FormData(e.target); const r = await fetch('/api/repairs/' + id + '/photos', { method:'POST', headers:{ Authorization:'Bearer ' + token }, body:fd }); const j = await r.json(); if(!r.ok) throw new Error(j.error || 'Error al subir fotos'); closeModal(); await loadAll(); renderRepairs(); }catch(err){ showError(err); } };
+}
+
+
+function dateCL(d){ return d ? new Date(d).toLocaleDateString('es-CL') : '-'; }
+function daysUntil(d){ if(!d) return null; return Math.ceil((new Date(d).setHours(0,0,0,0) - new Date().setHours(0,0,0,0)) / 86400000); }
+function serviceBadge(s){
+  const d = daysUntil(s.dueDate);
+  if(s.status !== 'pendiente') return `<span class="pill">${safe(s.status)}</span>`;
+  if(d !== null && d < 0) return `<span class="pill late">vencido</span>`;
+  if(d !== null && d <= 14) return `<span class="pill warn">próximo</span>`;
+  return `<span class="pill">pendiente</span>`;
+}
+function vehicleMatchesText(v, q){ return vehicleText(v).includes(norm(q)); }
+function vehicleRelated(v){
+  const vehicleLabel = norm([v.ownerName, v.plate, v.brand, v.model, v.year].join(' '));
+  const repairs = state.repairs.filter(r => String(r.vehicle?._id || r.vehicle) === String(v._id));
+  const quotes = state.quotes.filter(q => norm([q.ownerName, q.vehicleLabel].join(' ')).includes(norm(v.ownerName || '')) || norm(q.vehicleLabel || '').includes(norm(v.plate || '')));
+  const oil = state.oil.filter(o => norm([o.ownerName,o.brand,o.model,o.year].join(' ')).includes(norm(v.ownerName || '')) || vehicleLabel.includes(norm([o.ownerName,o.brand,o.model].join(' '))));
+  const services = state.services.filter(s => String(s.vehicle?._id || s.vehicle) === String(v._id));
+  return { repairs, quotes, oil, services };
+}
+function renderFichas(){
+  const vehicles = filterList(state.vehicles, 'fichas', vehicleText);
+  $('#content').innerHTML = `<div class="top"><div><h1>Fichas de vehículo</h1><p class="muted">Historial completo por auto: presupuestos, reparaciones, fotos, costos, utilidad y próximos servicios.</p></div><button onclick="vehicleForm()">+ Nuevo vehículo</button></div>${searchBox('fichas')}
+  <div class="grid">${vehicles.map(v => { const rel = vehicleRelated(v); const income = rel.repairs.reduce((s,r)=>s+Number(r.totalCharged||0),0); const profit = rel.repairs.reduce((s,r)=>s+Number(r.profit||0),0); const photos = rel.repairs.reduce((s,r)=>s+(r.photos?.length||0),0); return `<div class="card ficha-card"><h3>${safe(v.plate || 'Sin patente')} · ${safe(v.brand || '')} ${safe(v.model || '')}</h3><p><b>${safe(v.ownerName || '')}</b> · ${safe(v.ownerPhone || '')}</p><p class="muted">Año ${safe(v.year || '-')} · KM ${safe(v.currentKm || '-')}</p><div class="ficha-stats"><span>${rel.repairs.length} reparaciones</span><span>${rel.quotes.length} presupuestos</span><span>${photos} fotos</span><span>${money(profit)} utilidad</span></div><div class="actions"><button onclick="vehicleFicha('${v._id}')">Abrir ficha</button>${whatsappButton(v,'general')}</div></div>`; }).join('')}</div>`;
+}
+function vehicleFicha(id){
+  const v = state.vehicles.find(x => String(x._id) === String(id)); if(!v) return;
+  const rel = vehicleRelated(v);
+  const totalIncome = rel.repairs.reduce((s,r)=>s+Number(r.totalCharged||0),0);
+  const totalCost = rel.repairs.reduce((s,r)=>s+Number(r.totalCost||0),0);
+  const totalProfit = rel.repairs.reduce((s,r)=>s+Number(r.profit||0),0);
+  const photos = rel.repairs.flatMap(r => (r.photos||[]).map(p => ({...p, repairTitle:r.title})));
+  openModal(`<h2>Ficha vehículo · ${safe(v.plate || 'Sin patente')}</h2>
+    <div class="ficha-head"><div><h3>${safe(v.brand || '')} ${safe(v.model || '')} ${safe(v.year || '')}</h3><p><b>Cliente:</b> ${safe(v.ownerName || '')}</p><p><b>Teléfono:</b> ${safe(v.ownerPhone || '')}</p><p><b>KM actual:</b> ${safe(v.currentKm || '-')}</p></div><div class="actions ficha-actions">${whatsappButton(v,'general')}<button class="ghost" onclick="serviceForm('', '${v._id}')">+ Próx. servicio</button><button class="ghost" onclick="vehicleForm('${v._id}')">Editar datos</button></div></div>
+    <div class="grid compact"><div class="card"><h3>Ingresos</h3><div class="stat">${money(totalIncome)}</div></div><div class="card"><h3>Costos</h3><div class="stat">${money(totalCost)}</div></div><div class="card"><h3>Utilidad</h3><div class="stat">${money(totalProfit)}</div></div></div>
+    <h3>Próximos servicios</h3>${table(rel.services.map(s => [safe(s.serviceType), dateCL(s.dueDate), safe(s.dueKm || ''), serviceBadge(s), whatsappButton(v,'service',s)]), ['Servicio','Fecha','KM','Estado','WhatsApp'])}
+    <h3>Historial de reparaciones</h3>${table(rel.repairs.map(r => [dateCL(r.deliveredAt || r.createdAt), safe(r.title), badge(r.status), money(r.totalCharged), money(r.totalCost), money(r.profit), `<button onclick="repairPDF('${r._id}')">PDF</button>`]), ['Fecha','Trabajo','Estado','Cobrado','Costo','Utilidad',''])}
+    <h3>Presupuestos</h3>${table(rel.quotes.map(q => [dateCL(q.createdAt), safe(q.vehicleLabel), badge(q.status), money(q.total), `<button onclick="quotePDF('${q._id}')">PDF</button>`]), ['Fecha','Vehículo','Estado','Total',''])}
+    <h3>Tarjetas aceite</h3>${table(rel.oil.map(o => [dateCL(o.date || o.createdAt), safe(o.oilUsed), safe(o.currentKm), safe(o.nextKm), `<button onclick="oilPDF('${o._id}')">PDF</button>`]), ['Fecha','Aceite','KM actual','Próximo KM',''])}
+    <h3>Fotos de respaldo</h3><div class="photo-row">${photos.length ? photos.map(p => `<a href="${safe(p.url)}" target="_blank"><img src="${safe(p.url)}" title="${safe(p.repairTitle)}"></a>`).join('') : '<p class="muted">Sin fotos registradas.</p>'}</div>
+    <div class="actions"><button type="button" class="ghost" onclick="closeModal()">Cerrar</button></div>`);
+}
+function whatsappClean(phone){ let p = String(phone || '').replace(/\D/g,''); if(!p) return ''; if(p.startsWith('0')) p = p.slice(1); if(!p.startsWith('56')) p = '56' + p; return p; }
+function whatsappUrl(vehicle, type='general', service=null){
+  const phone = whatsappClean(vehicle?.ownerPhone);
+  const veh = `${vehicle?.brand || ''} ${vehicle?.model || ''} patente ${vehicle?.plate || ''}`.trim();
+  let msg = `Hola ${vehicle?.ownerName || ''}, soy Bastian de BGarage. Te contacto por tu vehículo ${veh}.`;
+  if(type === 'service' && service){ msg = `Hola ${vehicle?.ownerName || ''}, soy Bastian de BGarage. Según nuestro registro, tu ${veh} tiene pendiente ${service.serviceType || 'un próximo servicio'}${service.dueDate ? ' para el ' + dateCL(service.dueDate) : ''}${service.dueKm ? ' o cerca de los ' + service.dueKm + ' km' : ''}. ¿Quieres que coordinemos una revisión?`; }
+  return phone ? `https://wa.me/${phone}?text=${encodeURIComponent(msg)}` : '';
+}
+function whatsappButton(vehicle, type='general', service=null){
+  const url = whatsappUrl(vehicle,type,service);
+  if(!url) return `<button class="ghost" disabled>Sin teléfono</button>`;
+  const click = service ? `onclick="markContacted('${service._id}')"` : '';
+  return `<a class="btn whatsapp" target="_blank" href="${url}" ${click}>WhatsApp</a>`;
+}
+async function markContacted(id){ try{ const s = state.services.find(x => x._id === id); if(!s) return; await api('/service-reminders/' + id, { method:'PUT', body:JSON.stringify({ status:'contactado', lastContactedAt:new Date().toISOString() }) }); await loadAll(); }catch(e){ console.warn(e); } }
+function renderServices(){
+  const services = filterList(state.services, 'services', serviceText).sort((a,b) => new Date(a.dueDate || 8640000000000000) - new Date(b.dueDate || 8640000000000000));
+  $('#content').innerHTML = `<div class="top"><div><h1>Próximo servicio</h1><p class="muted">Se genera automáticamente al entregar reparaciones. Si detecta cambio de aceite, agenda 6 meses y/o próximo kilometraje.</p></div><button onclick="serviceForm()">+ Servicio manual</button></div>${searchBox('services')}
+    ${table(services.map(s => { const v = s.vehicle || {}; return [safe(v.ownerName || ''), safe(v.ownerPhone || ''), `${safe(v.plate || '')} · ${safe(v.brand || '')} ${safe(v.model || '')}`, safe(s.serviceType), dateCL(s.dueDate), safe(s.dueKm || ''), serviceBadge(s), whatsappButton(v,'service',s), `<button class="ghost" onclick="serviceForm('${s._id}')">Editar</button>`]; }), ['Cliente','Teléfono','Vehículo','Servicio','Fecha','KM','Estado','Contacto',''])}`;
+}
+function serviceForm(id='', vehicleId=''){
+  const s = state.services.find(x => x._id === id) || {};
+  const selectedVehicle = vehicleId || String(s.vehicle?._id || s.vehicle || '');
+  const options = state.vehicles.map(v => `<option value="${v._id}" ${String(selectedVehicle) === String(v._id) ? 'selected' : ''}>${safe(v.ownerName || '')} · ${safe(v.plate || '')} · ${safe(v.brand || '')} ${safe(v.model || '')}</option>`).join('');
+  baseForm(id ? 'Editar próximo servicio' : 'Nuevo próximo servicio', `
+    <select name="vehicle" required><option value="">Seleccionar vehículo</option>${options}</select>
+    <input name="serviceType" placeholder="Tipo de servicio" required value="${safe(s.serviceType || '')}">
+    <input name="summary" placeholder="Resumen / motivo" value="${safe(s.summary || '')}">
+    <input name="dueDate" type="date" value="${s.dueDate ? new Date(s.dueDate).toISOString().slice(0,10) : ''}">
+    <input name="dueKm" type="number" placeholder="KM objetivo" value="${safe(s.dueKm || '')}">
+    <select name="status"><option value="pendiente">Pendiente</option><option value="contactado" ${s.status === 'contactado' ? 'selected' : ''}>Contactado</option><option value="realizado" ${s.status === 'realizado' ? 'selected' : ''}>Realizado</option><option value="cancelado" ${s.status === 'cancelado' ? 'selected' : ''}>Cancelado</option></select>
+    <textarea name="notes" placeholder="Notas internas">${safe(s.notes || '')}</textarea>`,
+    async e => { e.preventDefault(); try{ const data = formData(e.target); data.source = s.source || 'manual'; await api('/service-reminders' + (id ? '/' + id : ''), { method:id?'PUT':'POST', body:JSON.stringify(data) }); closeModal(); await loadAll(); renderServices(); }catch(err){ showError(err); } }
+  );
 }
 
 function renderCommercial(){
