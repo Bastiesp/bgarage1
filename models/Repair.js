@@ -15,12 +15,14 @@ const repairSchema = new mongoose.Schema({
   totalCost: { type: Number, default: 0 },
   profit: { type: Number, default: 0 },
   photos: [{ url: String, publicId: String, caption: String }],
-  deliveredAt: Date
+  deliveredAt: Date,
+  statusChangedAt: Date
 }, { timestamps: true });
 repairSchema.pre('save', function(next){
   const partsCost = (this.partsChanged||[]).reduce((s,p)=>s+Number(p.cost||0),0);
   this.totalCost = partsCost + Number(this.externalCosts||0);
   this.profit = Number(this.totalCharged||0) - this.totalCost;
+  if (!this.statusChangedAt) this.statusChangedAt = new Date();
   if (this.status === 'entregado' && !this.deliveredAt) this.deliveredAt = new Date();
   next();
 });
