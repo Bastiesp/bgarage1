@@ -73,17 +73,32 @@ async function upsertReminderFromOilCard(oilCardId){
     { upsert: true, new: true, setDefaultsOnInsert: true }
   );
 }
+
+async function nextQuoteNumber() {
+  const last = await Quote.findOne({ quoteNumber: { $exists: true, $ne: null } }).sort({ quoteNumber: -1 }).select('quoteNumber');
+  return Math.max(Number(last?.quoteNumber || 1031) + 1, 1032);
+}
+async function ensureExistingQuoteNumbers() {
+  const missing = await Quote.find({ $or: [{ quoteNumber: { $exists: false } }, { quoteNumber: null }] }).sort({ createdAt: 1 });
+  for (const q of missing) {
+    q.quoteNumber = await nextQuoteNumber();
+    await q.save();
+  }
+}
+
 function calcRepairNumbers(data) {
   if (!data) return data;
   const partsCost = (data.partsChanged || []).reduce((s, p) => s + Number(p.cost || 0), 0);
   data.totalCost = partsCost + Number(data.externalCosts || 0);
   data.profit = Number(data.totalCharged || 0) - data.totalCost;
+  if (data.status && !data.statusChangedAt) data.statusChangedAt = new Date();
   if (data.status === 'entregado' && !data.deliveredAt) data.deliveredAt = new Date();
   return data;
 }
 
 const crud = (Model) => ({
   list: asyncHandler(async (req, res) => {
+    if (Model.modelName === 'Quote') await ensureExistingQuoteNumbers();
     const query = Model.find().sort({ createdAt: -1 }).limit(300);
     const docs = await maybePopulateVehicle(query, Model);
     res.json(docs);
@@ -97,7 +112,8 @@ const crud = (Model) => ({
   }),
 
   create: asyncHandler(async (req, res) => {
-    const body = Model.modelName === 'Repair' ? calcRepairNumbers({ ...req.body }) : req.body;
+    const body = Model.modelName === 'Repair' ? calcRepairNumbers({ ...req.body }) : { ...req.body };
+    if (Model.modelName === 'Quote' && !body.quoteNumber) body.quoteNumber = await nextQuoteNumber();
     const doc = await Model.create(body);
     if(Model.modelName === 'Repair') await upsertReminderFromRepair(doc._id);
     if(Model.modelName === 'OilCard') await upsertReminderFromOilCard(doc._id);
