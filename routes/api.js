@@ -6,6 +6,7 @@ const Vehicle = require('../models/Vehicle');
 const Quote = require('../models/Quote');
 const Repair = require('../models/Repair');
 const OilCard = require('../models/OilCard');
+const ServiceReminder = require('../models/ServiceReminder');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
@@ -29,11 +30,49 @@ function asyncHandler(fn) {
 }
 
 function maybePopulateVehicle(query, Model) {
-  // Solo Repair tiene el campo `vehicle`. Antes se intentaba hacer populate('vehicle')
-  // también sobre Vehicle, Quote y OilCard. En Mongoose 8 eso rompe la API.
-  return Model.schema.path('vehicle') ? query.populate('vehicle') : query;
+  if (!Model.schema.path('vehicle')) return query;
+  let q = query.populate('vehicle');
+  if (Model.modelName === 'ServiceReminder') q = q.populate('repair').populate('oilCard');
+  return q;
 }
 
+function addMonths(date, months){ const d = new Date(date || Date.now()); d.setMonth(d.getMonth() + months); return d; }
+function inferServiceType(text){
+  const t = String(text || '').toLowerCase();
+  if(t.includes('aceite')) return 'Cambio de aceite';
+  if(t.includes('freno') || t.includes('pastilla')) return 'Revisión de frenos';
+  if(t.includes('correa') || t.includes('distribucion') || t.includes('distribución')) return 'Revisión de correa/distribución';
+  if(t.includes('bujia') || t.includes('bujía')) return 'Revisión de bujías';
+  return 'Control post reparación';
+}
+function defaultMonthsForService(type){ return type === 'Cambio de aceite' ? 6 : 3; }
+async function upsertReminderFromRepair(repairId){
+  const repair = await Repair.findById(repairId).populate('vehicle');
+  if(!repair || repair.status !== 'entregado' || !repair.vehicle) return;
+  const text = [repair.title, repair.diagnosis, repair.workDone, repair.extraProblems, ...(repair.partsChanged||[]).map(p => p.name)].join(' ');
+  const serviceType = inferServiceType(text);
+  const baseDate = repair.deliveredAt || new Date();
+  const currentKm = Number(repair.vehicle.currentKm || 0);
+  const dueKm = serviceType === 'Cambio de aceite' && currentKm ? currentKm + 10000 : undefined;
+  await ServiceReminder.findOneAndUpdate(
+    { repair: repair._id, source: 'repair' },
+    { vehicle: repair.vehicle._id, repair: repair._id, source: 'repair', serviceType, summary: repair.title, dueDate: addMonths(baseDate, defaultMonthsForService(serviceType)), dueKm, status: 'pendiente' },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+}
+async function upsertReminderFromOilCard(oilCardId){
+  const oil = await OilCard.findById(oilCardId);
+  if(!oil) return;
+  let vehicle = await Vehicle.findOne({
+    ownerName: new RegExp('^' + String(oil.ownerName || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i')
+  });
+  if(!vehicle) return;
+  await ServiceReminder.findOneAndUpdate(
+    { oilCard: oil._id, source: 'oil' },
+    { vehicle: vehicle._id, oilCard: oil._id, source: 'oil', serviceType: 'Cambio de aceite', summary: `Cambio de aceite ${oil.oilUsed || ''}`.trim(), dueDate: addMonths(oil.date || oil.createdAt || new Date(), 6), dueKm: oil.nextKm, status: 'pendiente' },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+}
 function calcRepairNumbers(data) {
   if (!data) return data;
   const partsCost = (data.partsChanged || []).reduce((s, p) => s + Number(p.cost || 0), 0);
@@ -60,6 +99,8 @@ const crud = (Model) => ({
   create: asyncHandler(async (req, res) => {
     const body = Model.modelName === 'Repair' ? calcRepairNumbers({ ...req.body }) : req.body;
     const doc = await Model.create(body);
+    if(Model.modelName === 'Repair') await upsertReminderFromRepair(doc._id);
+    if(Model.modelName === 'OilCard') await upsertReminderFromOilCard(doc._id);
     res.status(201).json(doc);
   }),
 
@@ -67,6 +108,8 @@ const crud = (Model) => ({
     const body = Model.modelName === 'Repair' ? calcRepairNumbers({ ...req.body }) : req.body;
     const doc = await Model.findByIdAndUpdate(req.params.id, body, { new: true, runValidators: true });
     if (!doc) return res.status(404).json({ error: 'No encontrado' });
+    if(Model.modelName === 'Repair') await upsertReminderFromRepair(doc._id);
+    if(Model.modelName === 'OilCard') await upsertReminderFromOilCard(doc._id);
     res.json(doc);
   }),
 
@@ -80,7 +123,8 @@ for (const [base, Model] of [
   ['vehicles', Vehicle],
   ['quotes', Quote],
   ['repairs', Repair],
-  ['oil-cards', OilCard]
+  ['oil-cards', OilCard],
+  ['service-reminders', ServiceReminder]
 ]) {
   const c = crud(Model);
   router.get('/' + base, c.list);
