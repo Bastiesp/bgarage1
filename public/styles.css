@@ -15,3 +15,4 @@ button.danger:hover,
 .ghost.danger:hover {
   background: #ffecec;
 }
+.input-icon{display:flex;align-items:center;gap:8px;width:100%;border:1px solid #d7e4e8;border-radius:14px;padding:0 10px;margin:8px 0;background:white}.input-icon span{font-size:18px;min-width:22px;text-align:center}.input-icon input{border:0;margin:0;padding:13px 6px;outline:0;background:transparent}.password-field{position:relative}.eye-btn{background:transparent!important;color:#3c565e!important;border:0!important;box-shadow:none!important;padding:8px!important;border-radius:10px!important;min-width:38px}.eye-btn:hover{background:#eef8fa!important}

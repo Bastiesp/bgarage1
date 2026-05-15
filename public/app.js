@@ -356,6 +356,7 @@ function drawWrench(doc,x,y,s=1,color=[20,25,28]){
 function pdfHeader(doc,title){
   doc.setFillColor(255,255,255); doc.rect(0,0,210,34,'F');
   doc.setDrawColor(226,234,236); doc.line(14,33,196,33);
+  // Logo igual al login: llave inglesa + BGarage negro, sin círculo de fondo.
   drawWrench(doc,16,8,.62,[10,10,10]);
   doc.setTextColor(10,10,10); doc.setFont(undefined,'bold'); doc.setFontSize(19); doc.text('BGarage',34,21);
   doc.setFont(undefined,'normal'); doc.setFontSize(8.5); doc.setTextColor(85,95,100); doc.text('Taller mecánico · Diagnóstico · Reparación · Historial digital',34,27);
@@ -370,9 +371,10 @@ function pdfFooter(doc){
   doc.setTextColor(20,20,20); doc.setFont(undefined,'bold'); doc.text('BGarage',196,h-16,{align:'right'}); doc.setFont(undefined,'normal');
 }
 function pdfSection(doc,icon,title,y){
+  // Sin símbolos antes del título. Título centrado y subrayado calipso a lo ancho.
   doc.setTextColor(20,30,35); doc.setFont(undefined,'bold'); doc.setFontSize(12.5);
-  doc.text(title,16,y+6);
-  doc.setDrawColor(25,184,200); doc.setLineWidth(0.8); doc.line(16,y+9,96,y+9);
+  doc.text(title,105,y+6,{align:'center'});
+  doc.setDrawColor(25,184,200); doc.setLineWidth(0.75); doc.line(16,y+10,194,y+10);
   doc.setFont(undefined,'normal'); doc.setLineWidth(0.2);
   return y + 17;
 }
@@ -413,8 +415,12 @@ function quotePDF(id){
   });
   if(!(q.items || []).length){ doc.setTextColor(80,90,95); doc.text('Sin items registrados.',20,y); y += 10; }
   if(y > 242){ pdfFooter(doc); doc.addPage(); pdfHeader(doc,'Presupuesto de reparación'); y = 48; }
-  y += 4; doc.setFillColor(25,184,200); doc.roundedRect(116,y,78,18,4,4,'F'); doc.setTextColor(255,255,255); doc.setFont(undefined,'bold'); doc.setFontSize(16); doc.text(`TOTAL ${money(q.total)}`,188,y+12,{align:'right'}); doc.setFont(undefined,'normal');
-  y += 30; if(y > 255){ pdfFooter(doc); doc.addPage(); pdfHeader(doc,'Presupuesto de reparación'); y = 54; }
+  y += 5;
+  doc.setDrawColor(210,225,230); doc.line(116,y,194,y);
+  doc.setTextColor(10,10,10); doc.setFont(undefined,'bold'); doc.setFontSize(16);
+  doc.text(`TOTAL ${money(q.total)}`,190,y+10,{align:'right'});
+  doc.setFont(undefined,'normal');
+  y += 28; if(y > 255){ pdfFooter(doc); doc.addPage(); pdfHeader(doc,'Presupuesto de reparación'); y = 54; }
   doc.setDrawColor(150,180,185); doc.line(126,y,190,y); doc.setTextColor(9,102,113); doc.setFont(undefined,'bold'); doc.setFontSize(10); doc.text('Bastian Espinoza',158,y+7,{align:'center'}); doc.setFont(undefined,'normal'); doc.setFontSize(9); doc.text('Responsable BGarage',158,y+12,{align:'center'});
   pdfFooter(doc); doc.save(`presupuesto-bgarage-${num}-${q.ownerName || 'cliente'}.pdf`);
 }
@@ -422,13 +428,12 @@ function quotePDF(id){
 function oilPDF(id){
   const o = state.oil.find(x => x._id === id); const { jsPDF } = window.jspdf; const doc = new jsPDF({ orientation:'landscape', unit:'mm', format:'a5' });
   doc.setFillColor(239,247,248); doc.rect(0,0,210,148,'F');
-  doc.setFillColor(255,255,255); doc.setDrawColor(205,220,224); doc.setLineWidth(.8); doc.roundedRect(10,9,190,130,8,8,'FD');
-  doc.setFillColor(255,255,255); doc.roundedRect(16,15,178,118,6,6,'F');
-  doc.setFillColor(9,102,113); doc.roundedRect(16,15,178,35,6,6,'F');
+  doc.setFillColor(255,255,255); doc.setDrawColor(205,220,224); doc.setLineWidth(.8); doc.roundedRect(9,8,192,132,8,8,'FD');
+  doc.setFillColor(9,102,113); doc.roundedRect(16,15,178,34,6,6,'F');
   drawOilIcon(doc,27,18,.62,[255,255,255]);
   doc.setTextColor(255,255,255); doc.setFont(undefined,'bold'); doc.setFontSize(29); doc.text('BGarage',105,29,{align:'center'});
   doc.setFontSize(12); doc.setFont(undefined,'normal'); doc.text('TARJETA DE CAMBIO DE ACEITE',105,42,{align:'center'});
-  doc.setDrawColor(25,184,200); doc.setLineWidth(1.2); doc.line(45,53,165,53);
+  doc.setDrawColor(25,184,200); doc.setLineWidth(1.1); doc.line(22,55,188,55);
   const fields = [
     ['PROPIETARIO',o.ownerName||''],
     ['VEHÍCULO',`${o.brand||''} ${o.model||''} ${o.year||''}`.trim()],
@@ -437,18 +442,19 @@ function oilPDF(id){
     ['ACEITE USADO',o.oilUsed||''],
     ['FECHA',new Date(o.date || Date.now()).toLocaleDateString('es-CL')]
   ];
-  const positions = [[22,62],[108,62],[22,82],[108,82],[22,102],[108,102]];
+  // Recuadros más altos para que los datos queden dentro de la viñeta gris.
+  const positions = [[22,63],[108,63],[22,85],[108,85],[22,107],[108,107]];
   fields.forEach((f,idx) => {
     const [x,y] = positions[idx];
-    doc.setFillColor(248,252,253); doc.setDrawColor(218,230,233); doc.setLineWidth(.35); doc.roundedRect(x,y,78,15,3,3,'FD');
-    doc.setTextColor(9,102,113); doc.setFont(undefined,'bold'); doc.setFontSize(7.5); doc.text(f[0],x+4,y+5);
-    doc.setTextColor(25,35,40); doc.setFont(undefined,'bold'); doc.setFontSize(10.5);
+    doc.setFillColor(248,252,253); doc.setDrawColor(218,230,233); doc.setLineWidth(.35); doc.roundedRect(x,y,78,18,3,3,'FD');
+    doc.setTextColor(9,102,113); doc.setFont(undefined,'bold'); doc.setFontSize(7.2); doc.text(f[0],x+4,y+5.2);
+    doc.setTextColor(25,35,40); doc.setFont(undefined,'bold'); doc.setFontSize(9.8);
     const valueLines = doc.splitTextToSize(String(f[1] || '-'), 68);
-    doc.text(valueLines.slice(0,1),x+4,y+11);
+    doc.text(valueLines.slice(0,2),x+4,y+11.5);
   });
-  if(o.notes){ doc.setFont(undefined,'normal'); doc.setFontSize(7.5); doc.setTextColor(70,80,84); doc.text(doc.splitTextToSize('Notas: ' + o.notes,150),22,122); }
-  doc.setTextColor(20,20,20); doc.setFont(undefined,'bold'); doc.setFontSize(11.5); doc.text('SERVICIO CERTIFICADO',22,130);
-  doc.setFont(undefined,'normal'); doc.setFontSize(9.5); doc.text('Bastian Espinoza · +56959355607',188,130,{align:'right'});
+  if(o.notes){ doc.setFont(undefined,'normal'); doc.setFontSize(7.5); doc.setTextColor(70,80,84); doc.text(doc.splitTextToSize('Notas: ' + o.notes,150),22,130); }
+  doc.setTextColor(20,20,20); doc.setFont(undefined,'bold'); doc.setFontSize(11.5); doc.text('SERVICIO CERTIFICADO',22,135);
+  doc.setFont(undefined,'normal'); doc.setFontSize(9.5); doc.text('Bastian Espinoza · +56959355607',188,135,{align:'right'});
   doc.save('tarjeta-cambio-aceite-bgarage.pdf');
 }
 
