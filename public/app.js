@@ -24,6 +24,16 @@ const api = async (url, opts={}) => {
 };
 
 const showError = (e) => { console.error(e); alert(e.message || 'Ocurrió un error. Revisa los logs.'); };
+async function deleteRecord(path, label, after){
+  const ok = confirm(`¿Seguro que quieres eliminar ${label}? Esta acción no se puede deshacer.`);
+  if(!ok) return;
+  try{
+    await api(path, { method:'DELETE' });
+    await loadAll();
+    if(typeof after === 'function') after();
+  }catch(err){ showError(err); }
+}
+
 
 async function loadAll(){
   const [vehicles, repairs, quotes, oil, services, summary] = await Promise.all([
@@ -114,13 +124,13 @@ function carStatusIcon(status){
 function renderKanban(){
   const repairs = filterList(state.repairs, 'kanban', repairText);
   const cols = [['presupuestado','Presupuestados'], ['en_reparacion','En reparación'], ['entregado','Entregados']];
-  $('#content').innerHTML = `<div class="top"><h1>Kanban de reparaciones</h1><button onclick="repairForm()">+ Nuevo informe</button></div>${searchBox('kanban')}<div class="kanban">${cols.map(([key,title]) => `<div class="col"><h2>${title}</h2>${repairs.filter(r => r.status === key).map(r => `<div class="card kanban-card">${carStatusIcon(r.status)}<h3>${safe(r.vehicle?.plate || 'Sin patente')} · ${safe(r.title)}</h3><p>${safe(r.vehicle?.ownerName || '')}</p><p>${safe(r.vehicle?.brand || '')} ${safe(r.vehicle?.model || '')}</p><p class="muted">Fecha ingreso: ${dateCL(r.createdAt)}</p><p class="muted">Último movimiento: ${dateCL(r.statusChangedAt || r.updatedAt || r.createdAt)}</p><p class="status-line">${badge(r.status)} <span>Utilidad: <b>${money(r.profit)}</b></span></p><select onchange="moveRepair('${r._id}',this.value)"><option>mover a...</option><option value="presupuestado">Presupuestado</option><option value="en_reparacion">En reparación</option><option value="entregado">Entregado</option></select><button class="ghost" onclick="repairForm('${r._id}')">Ver / editar</button></div>`).join('')}</div>`).join('')}</div>`;
+  $('#content').innerHTML = `<div class="top"><h1>Kanban de reparaciones</h1><button onclick="repairForm()">+ Nuevo informe</button></div>${searchBox('kanban')}<div class="kanban">${cols.map(([key,title]) => `<div class="col"><h2>${title}</h2>${repairs.filter(r => r.status === key).map(r => `<div class="card kanban-card">${carStatusIcon(r.status)}<h3>${safe(r.vehicle?.plate || 'Sin patente')} · ${safe(r.title)}</h3><p>${safe(r.vehicle?.ownerName || '')}</p><p>${safe(r.vehicle?.brand || '')} ${safe(r.vehicle?.model || '')}</p><p class="muted">Fecha ingreso: ${dateCL(r.createdAt)}</p><p class="muted">Último movimiento: ${dateCL(r.statusChangedAt || r.updatedAt || r.createdAt)}</p><p class="status-line">${badge(r.status)} <span>Utilidad: <b>${money(r.profit)}</b></span></p><select onchange="moveRepair('${r._id}',this.value)"><option>mover a...</option><option value="presupuestado">Presupuestado</option><option value="en_reparacion">En reparación</option><option value="entregado">Entregado</option></select><button class="ghost" onclick="repairForm('${r._id}')">Ver / editar</button><button class="ghost danger" onclick="deleteRecord('/repairs/${r._id}','este informe del Kanban / historial',renderKanban)">Eliminar</button></div>`).join('')}</div>`).join('')}</div>`;
 }
 async function moveRepair(id,status){ if(!status || status === 'mover a...') return; await api('/repairs/' + id, { method:'PUT', body:JSON.stringify({status, statusChangedAt:new Date().toISOString()}) }); await loadAll(); renderKanban(); }
 
 function renderQuotes(){
   const quotes = filterList(state.quotes, 'quotes', quoteText);
-  $('#content').innerHTML = `<div class="top"><h1>Presupuestos</h1><button onclick="quoteForm()">+ Presupuesto</button></div>${searchBox('quotes')}${table(quotes.map(q => [`N° ${quoteNumberDisplay(q)}`, safe(q.ownerName), safe(q.vehicleLabel), badge(q.status), money(q.total), `<button onclick="quotePDF('${q._id}')">PDF</button> <button class="ghost" onclick="quoteForm('${q._id}')">Editar</button>`]), ['N°','Cliente','Vehículo','Estado','Total',''])}`;
+  $('#content').innerHTML = `<div class="top"><h1>Presupuestos</h1><button onclick="quoteForm()">+ Presupuesto</button></div>${searchBox('quotes')}${table(quotes.map(q => [`N° ${quoteNumberDisplay(q)}`, safe(q.ownerName), safe(q.vehicleLabel), badge(q.status), money(q.total), `<button onclick="quotePDF('${q._id}')">PDF</button> <button class="ghost" onclick="quoteForm('${q._id}')">Editar</button> <button class="ghost danger" onclick="deleteRecord('/quotes/${q._id}','este presupuesto',renderQuotes)">Eliminar</button>`]), ['N°','Cliente','Vehículo','Estado','Total',''])}`;
 }
 function quoteItemRow(description='', brief='', price=''){
   return `<div class="quote-item-row"><input name="itemDescription" placeholder="Item" value="${safe(description)}"><input name="itemBrief" placeholder="Breve descripción" value="${safe(brief)}"><input name="itemPrice" type="number" placeholder="Precio" value="${safe(price)}" oninput="recalcQuoteTotal()"><button type="button" class="ghost mini" onclick="this.closest('.quote-item-row').remove(); recalcQuoteTotal();">Quitar</button></div>`;
@@ -168,15 +178,43 @@ function quoteForm(id){
 
 function renderOil(){
   const oil = filterList(state.oil, 'oil', oilText);
-  $('#content').innerHTML = `<div class="top"><h1>Tarjetas cambio de aceite</h1><button onclick="oilForm()">+ Nueva tarjeta</button></div>${searchBox('oil')}${table(oil.map(o => [safe(o.ownerName), `${safe(o.brand || '')} ${safe(o.model || '')}`, safe(o.currentKm), safe(o.nextKm), safe(o.oilUsed), `<button onclick="oilPDF('${o._id}')">PDF</button>`]), ['Propietario','Vehículo','KM actual','Próximo cambio','Aceite',''])}`;
+  $('#content').innerHTML = `<div class="top"><h1>Tarjetas cambio de aceite</h1><button onclick="oilForm()">+ Nueva tarjeta</button></div>${searchBox('oil')}${table(oil.map(o => [safe(o.ownerName), `${safe(o.brand || '')} ${safe(o.model || '')}`, safe(o.currentKm), safe(o.nextKm), safe(o.oilUsed), `<button onclick="oilPDF('${o._id}')">PDF</button> <button class="ghost danger" onclick="deleteRecord('/oil-cards/${o._id}','esta tarjeta de cambio de aceite',renderOil)">Eliminar</button>`]), ['Propietario','Vehículo','KM actual','Próximo cambio','Aceite',''])}`;
 }
 function oilForm(){
-  baseForm('Tarjeta cambio de aceite', `<input name="ownerName" placeholder="Propietario"><input name="brand" placeholder="Marca"><input name="model" placeholder="Modelo"><input name="year" type="number" placeholder="Año"><input name="currentKm" type="number" placeholder="KM actual"><input name="nextKm" type="number" placeholder="Próximo cambio"><input name="oilUsed" placeholder="Aceite usado"><textarea name="notes" placeholder="Notas"></textarea>`, async e => { e.preventDefault(); try{ await api('/oil-cards', { method:'POST', body:JSON.stringify(formData(e.target)) }); closeModal(); await loadAll(); renderOil(); }catch(err){ showError(err); } });
+  const options = state.vehicles.map(v => `<option value="${v._id}" data-owner="${safe(v.ownerName || '')}" data-brand="${safe(v.brand || '')}" data-model="${safe(v.model || '')}" data-year="${safe(v.year || '')}" data-km="${safe(v.currentKm || '')}">${safe(v.ownerName || '')} · ${safe(v.plate || '')} · ${safe(v.brand || '')} ${safe(v.model || '')}</option>`).join('');
+  baseForm('Tarjeta cambio de aceite', `
+    <select name="vehicle" onchange="fillOilVehicle(this)"><option value="">Seleccionar vehículo/cliente existente</option>${options}</select>
+    <input name="ownerName" placeholder="Propietario">
+    <input name="brand" placeholder="Marca">
+    <input name="model" placeholder="Modelo">
+    <input name="year" type="number" placeholder="Año">
+    <input name="currentKm" type="number" placeholder="KM actual">
+    <input name="nextKm" type="number" placeholder="Próximo cambio">
+    <input name="oilUsed" placeholder="Aceite usado">
+    <textarea name="notes" placeholder="Notas"></textarea>`, async e => {
+      e.preventDefault();
+      try{
+        const data = formData(e.target);
+        await api('/oil-cards', { method:'POST', body:JSON.stringify(data) });
+        closeModal(); await loadAll(); renderOil();
+      }catch(err){ showError(err); }
+    });
+}
+function fillOilVehicle(select){
+  const opt = select.selectedOptions && select.selectedOptions[0];
+  if(!opt) return;
+  const form = select.closest('form');
+  const set = (name, val) => { const el = form.querySelector(`[name="${name}"]`); if(el && !el.value) el.value = val || ''; };
+  set('ownerName', opt.dataset.owner);
+  set('brand', opt.dataset.brand);
+  set('model', opt.dataset.model);
+  set('year', opt.dataset.year);
+  set('currentKm', opt.dataset.km);
 }
 
 function renderRepairs(){
   const repairs = filterList(state.repairs, 'repairs', repairText);
-  $('#content').innerHTML = `<div class="top"><h1>Reparaciones / Historial</h1><button onclick="repairForm()">+ Nuevo informe</button></div>${searchBox('repairs')}${table(repairs.map(r => [safe(r.vehicle?.ownerName || ''), safe(r.vehicle?.plate || ''), safe(r.title), badge(r.status), money(r.totalCharged), money(r.profit), `<button onclick="repairPDF('${r._id}')">PDF</button> <button class="ghost" onclick="repairForm('${r._id}')">Editar</button> <button class="ghost" onclick="photoForm('${r._id}')">Fotos</button>`]), ['Cliente','Patente','Trabajo','Estado','Cobrado','Utilidad',''])}`;
+  $('#content').innerHTML = `<div class="top"><h1>Reparaciones / Historial</h1><button onclick="repairForm()">+ Nuevo informe</button></div>${searchBox('repairs')}${table(repairs.map(r => [safe(r.vehicle?.ownerName || ''), safe(r.vehicle?.plate || ''), safe(r.title), badge(r.status), money(r.totalCharged), money(r.profit), `<button onclick="repairPDF('${r._id}')">PDF</button> <button class="ghost" onclick="repairForm('${r._id}')">Editar</button> <button class="ghost" onclick="photoForm('${r._id}')">Fotos</button> <button class="ghost danger" onclick="deleteRecord('/repairs/${r._id}','este informe de historial',renderRepairs)">Eliminar</button>`]), ['Cliente','Patente','Trabajo','Estado','Cobrado','Utilidad',''])}`;
 }
 function repairForm(id){
   const r = state.repairs.find(x => x._id === id) || {};
@@ -244,7 +282,7 @@ function vehicleFicha(id){
     <h3>Próximos servicios</h3>${table(rel.services.map(s => [safe(s.serviceType), dateCL(s.dueDate), safe(s.dueKm || ''), serviceBadge(s), whatsappButton(v,'service',s)]), ['Servicio','Fecha','KM','Estado','WhatsApp'])}
     <h3>Historial de reparaciones</h3>${table(rel.repairs.map(r => [dateCL(r.deliveredAt || r.createdAt), safe(r.title), badge(r.status), money(r.totalCharged), money(r.totalCost), money(r.profit), `<button onclick="repairPDF('${r._id}')">PDF</button>`]), ['Fecha','Trabajo','Estado','Cobrado','Costo','Utilidad',''])}
     <h3>Presupuestos</h3>${table(rel.quotes.map(q => [dateCL(q.createdAt), `N° ${quoteNumberDisplay(q)}`, safe(q.vehicleLabel), badge(q.status), money(q.total), `<button onclick="quotePDF('${q._id}')">PDF</button>`]), ['Fecha','N°','Vehículo','Estado','Total',''])}
-    <h3>Tarjetas aceite</h3>${table(rel.oil.map(o => [dateCL(o.date || o.createdAt), safe(o.oilUsed), safe(o.currentKm), safe(o.nextKm), `<button onclick="oilPDF('${o._id}')">PDF</button>`]), ['Fecha','Aceite','KM actual','Próximo KM',''])}
+    <h3>Tarjetas aceite</h3>${table(rel.oil.map(o => [dateCL(o.date || o.createdAt), safe(o.oilUsed), safe(o.currentKm), safe(o.nextKm), `<button onclick="oilPDF('${o._id}')">PDF</button> <button class="ghost danger" onclick="deleteRecord('/oil-cards/${o._id}','esta tarjeta de cambio de aceite',renderOil)">Eliminar</button>`]), ['Fecha','Aceite','KM actual','Próximo KM',''])}
     <h3>Fotos de respaldo</h3><div class="photo-row">${photos.length ? photos.map(p => `<a href="${safe(p.url)}" target="_blank"><img src="${safe(p.url)}" title="${safe(p.repairTitle)}"></a>`).join('') : '<p class="muted">Sin fotos registradas.</p>'}</div>
     <div class="actions"><button type="button" class="ghost" onclick="closeModal()">Cerrar</button></div>`);
 }
@@ -265,7 +303,7 @@ function whatsappButton(vehicle, type='general', service=null){
 async function markContacted(id){ try{ const s = state.services.find(x => x._id === id); if(!s) return; await api('/service-reminders/' + id, { method:'PUT', body:JSON.stringify({ status:'contactado', lastContactedAt:new Date().toISOString() }) }); await loadAll(); }catch(e){ console.warn(e); } }
 function renderServices(){
   const services = filterList(state.services, 'services', serviceText).sort((a,b) => new Date(a.dueDate || 8640000000000000) - new Date(b.dueDate || 8640000000000000));
-  $('#content').innerHTML = `<div class="top"><div><h1>Próximo servicio</h1><p class="muted">Se genera automáticamente al entregar reparaciones. Si detecta cambio de aceite, agenda 6 meses y/o próximo kilometraje.</p></div><button onclick="serviceForm()">+ Servicio manual</button></div>${searchBox('services')}
+  $('#content').innerHTML = `<div class="top"><div><h1>Próximo servicio</h1><p class="muted">Se genera automáticamente desde reparaciones entregadas y desde tarjetas de cambio de aceite. Agenda 6 meses y/o próximo kilometraje.</p></div><button onclick="serviceForm()">+ Servicio manual</button></div>${searchBox('services')}
     ${table(services.map(s => { const v = s.vehicle || {}; return [safe(v.ownerName || ''), safe(v.ownerPhone || ''), `${safe(v.plate || '')} · ${safe(v.brand || '')} ${safe(v.model || '')}`, safe(s.serviceType), dateCL(s.dueDate), safe(s.dueKm || ''), serviceBadge(s), whatsappButton(v,'service',s), `<button class="ghost" onclick="serviceForm('${s._id}')">Editar</button>`]; }), ['Cliente','Teléfono','Vehículo','Servicio','Fecha','KM','Estado','Contacto',''])}`;
 }
 function serviceForm(id='', vehicleId=''){
