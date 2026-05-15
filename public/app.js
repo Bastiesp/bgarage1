@@ -9,6 +9,7 @@ const norm = v => String(v || '').toLowerCase().normalize('NFD').replace(/[\u030
 
 let state = { vehicles:[], repairs:[], quotes:[], oil:[], services:[], summary:null };
 let filters = { dashboard:'', kanban:'', vehicles:'', quotes:'', oil:'', repairs:'', fichas:'', services:'', commercial:'' };
+let kanbanExpanded = new Set();
 
 const api = async (url, opts={}) => {
   const r = await fetch('/api' + url, {
@@ -98,7 +99,7 @@ function renderDashboard(){
 
 function renderVehicles(){
   const vehicles = filterList(state.vehicles, 'vehicles', vehicleText);
-  $('#content').innerHTML = `<div class="top"><h1>Vehículos / Clientes</h1><button onclick="vehicleForm()">+ Nuevo vehículo</button></div>${searchBox('vehicles')}${table(vehicles.map(v => [safe(v.ownerName), safe(v.ownerPhone || ''), safe(v.plate || ''), `${safe(v.brand || '')} ${safe(v.model || '')}`, safe(v.year || ''), safe(v.currentKm || ''), `<button class="ghost" onclick="vehicleFicha('${v._id}')">Ficha</button> <button class="ghost" onclick="vehicleForm('${v._id}')">Editar</button>`]), ['Propietario','Teléfono','Patente','Vehículo','Año','KM',''])}`;
+  $('#content').innerHTML = `<div class="top"><h1>Vehículos / Clientes</h1><button onclick="vehicleForm()">+ Nuevo vehículo</button></div>${searchBox('vehicles')}${table(vehicles.map(v => [safe(v.ownerName), safe(v.ownerPhone || ''), safe(v.plate || ''), `${safe(v.brand || '')} ${safe(v.model || '')}`, safe(v.year || ''), safe(v.currentKm || ''), `<button class="ghost" onclick="vehicleFicha('${v._id}')">Ficha</button> <button class="ghost" onclick="vehicleForm('${v._id}')">Editar</button> <button class="ghost danger" onclick="deleteRecord('/vehicles/${v._id}','este cliente/vehículo y sus datos vinculados',renderVehicles)">Eliminar</button>`]), ['Propietario','Teléfono','Patente','Vehículo','Año','KM',''])}`;
 }
 function vehicleForm(id){
   const v = state.vehicles.find(x => x._id === id) || {};
@@ -124,7 +125,18 @@ function carStatusIcon(status){
 function renderKanban(){
   const repairs = filterList(state.repairs, 'kanban', repairText);
   const cols = [['presupuestado','Presupuestados'], ['en_reparacion','En reparación'], ['entregado','Entregados']];
-  $('#content').innerHTML = `<div class="top"><h1>Kanban de reparaciones</h1><button onclick="repairForm()">+ Nuevo informe</button></div>${searchBox('kanban')}<div class="kanban">${cols.map(([key,title]) => `<div class="col"><h2>${title}</h2>${repairs.filter(r => r.status === key).map(r => `<div class="card kanban-card">${carStatusIcon(r.status)}<h3>${safe(r.vehicle?.plate || 'Sin patente')} · ${safe(r.title)}</h3><p>${safe(r.vehicle?.ownerName || '')}</p><p>${safe(r.vehicle?.brand || '')} ${safe(r.vehicle?.model || '')}</p><p class="muted">Fecha ingreso: ${dateCL(r.createdAt)}</p><p class="muted">Último movimiento: ${dateCL(r.statusChangedAt || r.updatedAt || r.createdAt)}</p><p class="status-line">${badge(r.status)} <span>Utilidad: <b>${money(r.profit)}</b></span></p><select onchange="moveRepair('${r._id}',this.value)"><option>mover a...</option><option value="presupuestado">Presupuestado</option><option value="en_reparacion">En reparación</option><option value="entregado">Entregado</option></select><button class="ghost" onclick="repairForm('${r._id}')">Ver / editar</button><button class="ghost danger" onclick="deleteRecord('/repairs/${r._id}','este informe del Kanban / historial',renderKanban)">Eliminar</button></div>`).join('')}</div>`).join('')}</div>`;
+  const card = (r) => {
+    const expanded = kanbanExpanded.has(String(r._id));
+    const details = expanded ? `<div class="kanban-details"><p>${safe(r.vehicle?.brand || '')} ${safe(r.vehicle?.model || '')}</p><p class="muted">Fecha ingreso: ${dateCL(r.createdAt)}</p><p class="muted">Último movimiento: ${dateCL(r.statusChangedAt || r.updatedAt || r.createdAt)}</p><p class="status-line">${badge(r.status)} <span>Utilidad: <b>${money(r.profit)}</b></span></p></div>` : '';
+    return `<div class="card kanban-card ${expanded ? 'expanded' : 'compact'}">${carStatusIcon(r.status)}<h3>${safe(r.vehicle?.plate || 'Sin patente')}</h3><p class="kanban-title">${safe(r.title)}</p><p class="kanban-client">${safe(r.vehicle?.ownerName || '')}</p>${details}<div class="kanban-actions"><button class="ghost mini" onclick="toggleKanbanCard('${r._id}')">${expanded ? 'Reducir' : 'Ampliar'}</button><select onchange="moveRepair('${r._id}',this.value)"><option>mover a...</option><option value="presupuestado">Presupuestado</option><option value="en_reparacion">En reparación</option><option value="entregado">Entregado</option></select><button class="ghost mini" onclick="repairForm('${r._id}')">Ver / editar</button><button class="ghost danger mini" onclick="deleteRecord('/repairs/${r._id}','este informe del Kanban / historial',renderKanban)">Eliminar</button></div></div>`;
+  };
+  $('#content').innerHTML = `<div class="top"><h1>Kanban de reparaciones</h1><button onclick="repairForm()">+ Nuevo informe</button></div>${searchBox('kanban')}<div class="kanban">${cols.map(([key,title]) => `<div class="col"><h2>${title}</h2>${repairs.filter(r => r.status === key).map(card).join('')}</div>`).join('')}</div>`;
+}
+function toggleKanbanCard(id){
+  id = String(id);
+  if(kanbanExpanded.has(id)) kanbanExpanded.delete(id);
+  else kanbanExpanded.add(id);
+  renderKanban();
 }
 async function moveRepair(id,status){ if(!status || status === 'mover a...') return; await api('/repairs/' + id, { method:'PUT', body:JSON.stringify({status, statusChangedAt:new Date().toISOString()}) }); await loadAll(); renderKanban(); }
 
@@ -235,8 +247,8 @@ function repairForm(id){
   );
 }
 function photoForm(id){
-  openModal(`<h2>Subir fotos comprimidas</h2><p class="muted">Se comprimen en el servidor antes de Cloudinary.</p><form id="pf"><input type="file" name="photos" accept="image/*" multiple><div class="actions"><button>Subir</button><button type="button" class="ghost" onclick="closeModal()">Cerrar</button></div></form>`);
-  $('#pf').onsubmit = async e => { e.preventDefault(); try{ const fd = new FormData(e.target); const r = await fetch('/api/repairs/' + id + '/photos', { method:'POST', headers:{ Authorization:'Bearer ' + token }, body:fd }); const j = await r.json(); if(!r.ok) throw new Error(j.error || 'Error al subir fotos'); closeModal(); await loadAll(); renderRepairs(); }catch(err){ showError(err); } };
+  openModal(`<h2>Subir fotos comprimidas</h2><p class="muted">Se comprimen antes de guardarlas. Si Cloudinary está configurado se suben a Cloudinary; si no, quedan guardadas comprimidas en la base de datos.</p><form id="pf"><input type="file" name="photos" accept="image/*" multiple><div class="actions"><button>Subir</button><button type="button" class="ghost" onclick="closeModal()">Cerrar</button></div></form>`);
+  $('#pf').onsubmit = async e => { e.preventDefault(); try{ const fd = new FormData(e.target); const r = await fetch('/api/repairs/' + id + '/photos', { method:'POST', headers:{ Authorization:'Bearer ' + token }, body:fd }); const j = await r.json().catch(()=>({})); if(!r.ok) throw new Error(j.error || 'Error al subir fotos'); closeModal(); await loadAll(); renderRepairs(); }catch(err){ showError(err); } };
 }
 
 
