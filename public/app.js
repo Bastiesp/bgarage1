@@ -117,7 +117,7 @@ async function moveRepair(id,status){ if(!status || status === 'mover a...') ret
 
 function renderQuotes(){
   const quotes = filterList(state.quotes, 'quotes', quoteText);
-  $('#content').innerHTML = `<div class="top"><h1>Presupuestos</h1><button onclick="quoteForm()">+ Presupuesto</button></div>${searchBox('quotes')}${table(quotes.map(q => [safe(q.ownerName), safe(q.vehicleLabel), badge(q.status), money(q.total), `<button onclick="quotePDF('${q._id}')">PDF</button>`]), ['Cliente','Vehículo','Estado','Total',''])}`;
+  $('#content').innerHTML = `<div class="top"><h1>Presupuestos</h1><button onclick="quoteForm()">+ Presupuesto</button></div>${searchBox('quotes')}${table(quotes.map(q => [safe(q.ownerName), safe(q.vehicleLabel), badge(q.status), money(q.total), `<button onclick="quotePDF('${q._id}')">PDF</button> <button class="ghost" onclick="quoteForm('${q._id}')">Editar</button>`]), ['Cliente','Vehículo','Estado','Total',''])}`;
 }
 function quoteItemRow(description='', brief='', price=''){
   return `<div class="quote-item-row"><input name="itemDescription" placeholder="Item" value="${safe(description)}"><input name="itemBrief" placeholder="Breve descripción" value="${safe(brief)}"><input name="itemPrice" type="number" placeholder="Precio" value="${safe(price)}" oninput="recalcQuoteTotal()"><button type="button" class="ghost mini" onclick="this.closest('.quote-item-row').remove(); recalcQuoteTotal();">Quitar</button></div>`;
@@ -127,16 +127,20 @@ function recalcQuoteTotal(){
   const total = $$('input[name="itemPrice"]').reduce((s, el) => s + Number(el.value || 0), 0);
   const box = $('#quoteTotalPreview'); if(box) box.textContent = money(total);
 }
-function quoteForm(){
-  baseForm('Nuevo presupuesto profesional', `
-    <input name="ownerName" placeholder="Cliente" required>
-    <input name="vehicleLabel" placeholder="Vehículo / patente">
+function quoteForm(id){
+  const q = state.quotes.find(x => x._id === id) || {};
+  const itemRows = (q.items && q.items.length)
+    ? q.items.map(i => quoteItemRow(i.description || '', i.brief || '', i.unitPrice || '')).join('')
+    : quoteItemRow();
+
+  baseForm(id ? 'Editar presupuesto profesional' : 'Nuevo presupuesto profesional', `
+    <input name="ownerName" placeholder="Cliente" required value="${safe(q.ownerName || '')}">
+    <input name="vehicleLabel" placeholder="Vehículo / patente" value="${safe(q.vehicleLabel || '')}">
     <div class="form-section-title">Items del presupuesto</div>
-    <p class="muted small">Agrega cada línea con item, descripción breve y precio. El total se calcula solo para mostrarlo en el PDF.</p>
-    <div id="quoteItems">${quoteItemRow()}</div>
+    <p class="muted small">Agrega cada línea con item, descripción breve y precio. El total se calcula automáticamente.</p>
+    <div id="quoteItems">${itemRows}</div>
     <button type="button" class="ghost" onclick="addQuoteItem()">+ Agregar item</button>
-    <div class="total-preview"><span>Total estimado</span><b id="quoteTotalPreview">$0</b></div>
-    <textarea name="notes" placeholder="Observaciones para el cliente"></textarea>`,
+    <div class="total-preview"><span>Total estimado</span><b id="quoteTotalPreview">$0</b></div>`,
     async e => {
       e.preventDefault();
       try{
@@ -151,7 +155,7 @@ function quoteForm(){
           unitPrice: Number(prices[idx] || 0)
         })).filter(i => i.description || i.brief || i.unitPrice);
         const total = items.reduce((s,i) => s + Number(i.unitPrice || 0), 0);
-        await api('/quotes', { method:'POST', body:JSON.stringify({ ownerName:fd.get('ownerName'), vehicleLabel:fd.get('vehicleLabel'), notes:fd.get('notes'), items, subtotal:total, total }) });
+        await api('/quotes' + (id ? '/' + id : ''), { method:id ? 'PUT' : 'POST', body:JSON.stringify({ ownerName:fd.get('ownerName'), vehicleLabel:fd.get('vehicleLabel'), items, subtotal:total, total }) });
         closeModal(); await loadAll(); renderQuotes();
       }catch(err){ showError(err); }
     }
@@ -217,98 +221,113 @@ function renderCommercial(){
 function saveGoal(){ localStorage.setItem('bgarageProfitGoal', Number($('#goalInput').value || 0)); renderCommercial(); }
 
 function pdfBase(title){ const { jsPDF } = window.jspdf; const doc = new jsPDF(); pdfHeader(doc,title); return doc; }
+function drawWrench(doc,x,y,s=1,color=[20,25,28]){
+  doc.setDrawColor(...color); doc.setFillColor(...color); doc.setLineWidth(1.1*s);
+  doc.circle(x+3*s,y+3*s,3.2*s,'S');
+  doc.setDrawColor(255,255,255); doc.setLineWidth(1.4*s); doc.line(x+1.2*s,y+1.2*s,x+4.8*s,y+4.8*s);
+  doc.setDrawColor(...color); doc.setLineWidth(1.6*s); doc.line(x+5.2*s,y+5.2*s,x+17*s,y+17*s);
+  doc.setFillColor(...color); doc.circle(x+18.4*s,y+18.4*s,2.2*s,'F');
+  doc.setFillColor(255,255,255); doc.circle(x+18.4*s,y+18.4*s,.85*s,'F');
+}
 function pdfHeader(doc,title){
-  doc.setFillColor(9, 102, 113); doc.rect(0,0,210,32,'F');
-  doc.setFillColor(25,184,200); doc.roundedRect(14,9,36,14,4,4,'F');
-  doc.setTextColor(255,255,255); doc.setFont(undefined,'bold'); doc.setFontSize(17); doc.text('BGarage',19,19);
-  doc.setFontSize(18); doc.text(title,196,19,{align:'right'});
-  doc.setFontSize(9); doc.setFont(undefined,'normal'); doc.text('Taller mecánico · Gestión profesional de servicios',196,26,{align:'right'});
+  doc.setFillColor(255,255,255); doc.rect(0,0,210,34,'F');
+  doc.setDrawColor(226,234,236); doc.line(14,33,196,33);
+  drawWrench(doc,16,8,.62,[10,10,10]);
+  doc.setTextColor(10,10,10); doc.setFont(undefined,'bold'); doc.setFontSize(19); doc.text('BGarage',34,21);
+  doc.setFont(undefined,'normal'); doc.setFontSize(8.5); doc.setTextColor(85,95,100); doc.text('Taller mecánico · Diagnóstico · Reparación · Historial digital',34,27);
+  doc.setTextColor(9,102,113); doc.setFont(undefined,'bold'); doc.setFontSize(16); doc.text(title,196,20,{align:'right'});
+  doc.setFont(undefined,'normal'); doc.setFontSize(9); doc.setTextColor(85,95,100); doc.text(new Date().toLocaleDateString('es-CL'),196,27,{align:'right'});
   doc.setTextColor(25,35,40);
 }
 function pdfFooter(doc){
   const h = doc.internal.pageSize.getHeight();
   doc.setDrawColor(210,225,230); doc.line(14,h-26,196,h-26);
-  doc.setFontSize(10); doc.setTextColor(50,65,70); doc.text('Firmado por Bastian Espinoza · +56959355607',14,h-16);
-  doc.setTextColor(16,149,163); doc.setFont(undefined,'bold'); doc.text('BGARAGE · SERVICIO CERTIFICADO',196,h-16,{align:'right'}); doc.setFont(undefined,'normal');
+  doc.setFontSize(10); doc.setTextColor(35,45,50); doc.text('Firmado por Bastian Espinoza · +56959355607',14,h-16);
+  doc.setTextColor(20,20,20); doc.setFont(undefined,'bold'); doc.text('BGarage',196,h-16,{align:'right'}); doc.setFont(undefined,'normal');
 }
 function pdfSection(doc,icon,title,y){
-  doc.setFillColor(235,250,252); doc.setDrawColor(180,230,236); doc.roundedRect(14,y,182,12,3,3,'FD');
-  doc.setFillColor(25,184,200); doc.circle(21,y+6,4.2,'F'); doc.setTextColor(255,255,255); doc.setFont(undefined,'bold'); doc.setFontSize(8); doc.text(icon,21,y+7,{align:'center'});
-  doc.setTextColor(9,102,113); doc.setFontSize(12); doc.text(title,29,y+7.5); doc.setFont(undefined,'normal');
+  doc.setFillColor(246,251,252); doc.setDrawColor(210,232,236); doc.roundedRect(14,y,182,12,3,3,'FD');
+  doc.setTextColor(9,102,113); doc.setFont(undefined,'bold'); doc.setFontSize(12); doc.text(`${icon}  ${title}`,20,y+7.7); doc.setFont(undefined,'normal');
   return y + 17;
 }
 function ensurePage(doc,y,title='Continuación'){ if(y > 265){ pdfFooter(doc); doc.addPage(); pdfHeader(doc,title); return 43; } return y; }
 function pdfTextBlock(doc,text,x,y,w){ const lines = doc.splitTextToSize(String(text || ''), w); doc.text(lines,x,y); return y + (lines.length * 5) + 4; }
 function pdfInfoRow(doc,label,value,y){ doc.setFontSize(10.5); doc.setTextColor(9,102,113); doc.setFont(undefined,'bold'); doc.text(label,18,y); doc.setFont(undefined,'normal'); doc.setTextColor(35,45,50); doc.text(String(value || ''),60,y); doc.setDrawColor(235,242,244); doc.line(18,y+3,190,y+3); return y + 9; }
-function drawOilIcon(doc,x,y,s=1){
-  doc.setDrawColor(255,255,255); doc.setFillColor(255,255,255);
+function drawOilIcon(doc,x,y,s=1,color=[255,255,255]){
+  doc.setDrawColor(...color); doc.setFillColor(...color);
   doc.setLineWidth(1.2*s);
   doc.roundedRect(x,y+9*s,26*s,15*s,3*s,3*s,'S');
   doc.line(x+5*s,y+9*s,x+9*s,y+3*s); doc.line(x+9*s,y+3*s,x+18*s,y+3*s); doc.line(x+18*s,y+3*s,x+21*s,y+9*s);
   doc.line(x+26*s,y+12*s,x+36*s,y+8*s); doc.line(x+36*s,y+8*s,x+39*s,y+11*s); doc.line(x+26*s,y+17*s,x+36*s,y+13*s);
   doc.circle(x+33*s,y+25*s,2.5*s,'F');
 }
+function quoteTableHeader(doc,y){
+  doc.setFillColor(9,102,113); doc.roundedRect(16,y,178,9,2,2,'F'); doc.setTextColor(255,255,255); doc.setFont(undefined,'bold'); doc.setFontSize(9);
+  doc.text('ITEM',20,y+6); doc.text('DESCRIPCIÓN',62,y+6); doc.text('PRECIO',190,y+6,{align:'right'}); doc.setFont(undefined,'normal'); return y + 14;
+}
 
 function quotePDF(id){
   const q = state.quotes.find(x => x._id === id); const doc = pdfBase('Presupuesto de reparación'); let y = 44;
   doc.setFontSize(10); doc.setTextColor(70,80,84); doc.text('Documento técnico-comercial emitido por BGarage para revisión y aprobación del cliente.',14,y); y += 8;
-  y = pdfSection(doc,'1','Datos del cliente y vehículo',y);
+  y = pdfSection(doc,'👤','Datos del cliente y vehículo',y);
   y = pdfInfoRow(doc,'Cliente', q.ownerName || '', y);
   y = pdfInfoRow(doc,'Vehículo', q.vehicleLabel || '', y);
   y = pdfInfoRow(doc,'Fecha', new Date(q.createdAt || Date.now()).toLocaleDateString('es-CL'), y);
-  y += 3; y = pdfSection(doc,'2','Detalle del presupuesto',y);
-  doc.setFillColor(9,102,113); doc.roundedRect(16,y,178,9,2,2,'F'); doc.setTextColor(255,255,255); doc.setFont(undefined,'bold'); doc.setFontSize(9);
-  doc.text('ITEM',20,y+6); doc.text('DESCRIPCIÓN',62,y+6); doc.text('PRECIO',190,y+6,{align:'right'}); doc.setFont(undefined,'normal'); y += 14;
+  y += 3; y = pdfSection(doc,'🧾','Detalle del presupuesto',y);
+  y = quoteTableHeader(doc,y);
   (q.items || []).forEach((i,idx) => {
-    y = ensurePage(doc,y,'Presupuesto');
-    doc.setFillColor(idx % 2 ? 250 : 244, idx % 2 ? 253 : 251, idx % 2 ? 253 : 252); doc.roundedRect(16,y-5,178,16,2,2,'F');
+    if(y > 250){ pdfFooter(doc); doc.addPage(); pdfHeader(doc,'Presupuesto de reparación'); y = 43; y = quoteTableHeader(doc,y); }
+    const briefLines = doc.splitTextToSize(String(i.brief || ''),86);
+    const rowH = Math.max(16, 8 + (briefLines.length * 4));
+    doc.setFillColor(idx % 2 ? 250 : 244, idx % 2 ? 253 : 251, idx % 2 ? 253 : 252); doc.roundedRect(16,y-5,178,rowH,2,2,'F');
     doc.setTextColor(25,35,40); doc.setFont(undefined,'bold'); doc.setFontSize(10); doc.text(String(i.description || 'Item'),20,y+1);
-    doc.setFont(undefined,'normal'); doc.setFontSize(9); doc.setTextColor(75,85,90); doc.text(doc.splitTextToSize(String(i.brief || ''),86),62,y+1);
-    doc.setTextColor(25,35,40); doc.setFont(undefined,'bold'); doc.text(money(i.unitPrice),190,y+1,{align:'right'}); doc.setFont(undefined,'normal'); y += 18;
+    doc.setFont(undefined,'normal'); doc.setFontSize(9); doc.setTextColor(75,85,90); doc.text(briefLines,62,y+1);
+    doc.setTextColor(25,35,40); doc.setFont(undefined,'bold'); doc.text(money(i.unitPrice),190,y+1,{align:'right'}); doc.setFont(undefined,'normal'); y += rowH + 2;
   });
   if(!(q.items || []).length){ doc.setTextColor(80,90,95); doc.text('Sin items registrados.',20,y); y += 10; }
+  if(y > 242){ pdfFooter(doc); doc.addPage(); pdfHeader(doc,'Presupuesto de reparación'); y = 48; }
   y += 4; doc.setFillColor(25,184,200); doc.roundedRect(116,y,78,18,4,4,'F'); doc.setTextColor(255,255,255); doc.setFont(undefined,'bold'); doc.setFontSize(16); doc.text(`TOTAL ${money(q.total)}`,188,y+12,{align:'right'}); doc.setFont(undefined,'normal');
-  y += 28; y = ensurePage(doc,y,'Presupuesto'); y = pdfSection(doc,'3','Condiciones y observaciones',y); doc.setFontSize(10); doc.setTextColor(45,55,60);
-  y = pdfTextBlock(doc, q.notes || 'Presupuesto sujeto a revisión final del vehículo, disponibilidad de repuestos y aprobación del cliente antes de iniciar trabajos.',18,y,174);
-  y += 10; doc.setDrawColor(150,180,185); doc.line(126,y,190,y); doc.setTextColor(9,102,113); doc.setFont(undefined,'bold'); doc.text('Bastian Espinoza',158,y+7,{align:'center'}); doc.setFont(undefined,'normal'); doc.setFontSize(9); doc.text('Responsable BGarage',158,y+12,{align:'center'});
+  y += 30; if(y > 255){ pdfFooter(doc); doc.addPage(); pdfHeader(doc,'Presupuesto de reparación'); y = 54; }
+  doc.setDrawColor(150,180,185); doc.line(126,y,190,y); doc.setTextColor(9,102,113); doc.setFont(undefined,'bold'); doc.setFontSize(10); doc.text('Bastian Espinoza',158,y+7,{align:'center'}); doc.setFont(undefined,'normal'); doc.setFontSize(9); doc.text('Responsable BGarage',158,y+12,{align:'center'});
   pdfFooter(doc); doc.save(`presupuesto-bgarage-${q.ownerName || 'cliente'}.pdf`);
 }
 
 function oilPDF(id){
   const o = state.oil.find(x => x._id === id); const { jsPDF } = window.jspdf; const doc = new jsPDF({ orientation:'landscape', unit:'mm', format:'a5' });
-  doc.setFillColor(231,246,248); doc.rect(0,0,210,148,'F');
-  doc.setFillColor(255,255,255); doc.setDrawColor(9,102,113); doc.setLineWidth(1.2); doc.roundedRect(12,10,186,128,8,8,'FD');
-  doc.setFillColor(9,102,113); doc.roundedRect(12,10,186,42,8,8,'F');
-  doc.setTextColor(255,255,255); doc.setFont(undefined,'bold'); doc.setFontSize(30); doc.text('BGarage',105,26,{align:'center'});
-  doc.setFontSize(13); doc.text('TARJETA DE CAMBIO DE ACEITE',105,39,{align:'center'});
-  drawOilIcon(doc,25,17,.7); drawOilIcon(doc,158,17,.7);
-  doc.setFillColor(245,251,252); doc.roundedRect(22,62,166,42,6,6,'F');
-  doc.setTextColor(9,102,113); doc.setFont(undefined,'bold'); doc.setFontSize(9);
+  doc.setFillColor(236,246,247); doc.rect(0,0,210,148,'F');
+  doc.setFillColor(255,255,255); doc.setDrawColor(20,20,20); doc.setLineWidth(.9); doc.roundedRect(12,10,186,128,7,7,'FD');
+  doc.setFillColor(9,102,113); doc.roundedRect(12,10,186,39,7,7,'F');
+  doc.setTextColor(255,255,255); doc.setFont(undefined,'bold'); doc.setFontSize(31); doc.text('BGarage',105,25,{align:'center'});
+  doc.setFontSize(12.5); doc.text('TARJETA DE CAMBIO DE ACEITE',105,38,{align:'center'});
+  drawOilIcon(doc,25,16,.68,[255,255,255]); drawOilIcon(doc,158,16,.68,[255,255,255]);
+  doc.setDrawColor(215,225,228); doc.setLineWidth(.4);
+  doc.setFillColor(248,252,253); doc.roundedRect(22,58,166,49,5,5,'FD');
+  doc.setTextColor(9,102,113); doc.setFont(undefined,'bold'); doc.setFontSize(8.5);
   const fields = [ ['PROPIETARIO',o.ownerName||''], ['VEHÍCULO',`${o.brand||''} ${o.model||''} ${o.year||''}`.trim()], ['KM ACTUAL',o.currentKm||''], ['PRÓXIMO CAMBIO',o.nextKm||''], ['ACEITE USADO',o.oilUsed||''], ['FECHA',new Date(o.date || Date.now()).toLocaleDateString('es-CL')] ];
-  let y = 72; fields.forEach((f,idx) => { const x = idx % 2 ? 108 : 30; if(idx > 0 && idx % 2 === 0) y += 14; doc.setTextColor(9,102,113); doc.setFont(undefined,'bold'); doc.text(f[0],x,y); doc.setTextColor(25,35,40); doc.setFont(undefined,'normal'); doc.text(String(f[1]),x,y+6); });
-  if(o.notes){ doc.setFontSize(8); doc.setTextColor(70,80,84); doc.text(doc.splitTextToSize('Notas: ' + o.notes,150),30,112); }
-  doc.setFillColor(25,184,200); doc.roundedRect(22,119,72,13,4,4,'F'); doc.setTextColor(255,255,255); doc.setFont(undefined,'bold'); doc.setFontSize(12); doc.text('SERVICIO CERTIFICADO',58,128,{align:'center'});
-  doc.setTextColor(35,45,50); doc.setFontSize(11); doc.text('Bastian Espinoza',188,123,{align:'right'}); doc.text('+56959355607',188,130,{align:'right'});
+  let y = 70; fields.forEach((f,idx) => { const x = idx % 2 ? 109 : 31; if(idx > 0 && idx % 2 === 0) y += 16; doc.setTextColor(9,102,113); doc.setFont(undefined,'bold'); doc.text(f[0],x,y); doc.setDrawColor(215,225,228); doc.line(x,y+2,x+65,y+2); doc.setTextColor(25,35,40); doc.setFont(undefined,'normal'); doc.setFontSize(10); doc.text(String(f[1]),x,y+8); doc.setFontSize(8.5); });
+  if(o.notes){ doc.setFontSize(8); doc.setTextColor(70,80,84); doc.text(doc.splitTextToSize('Notas: ' + o.notes,150),30,114); }
+  doc.setTextColor(20,20,20); doc.setFont(undefined,'bold'); doc.setFontSize(12); doc.text('SERVICIO CERTIFICADO',31,127);
+  doc.setFont(undefined,'normal'); doc.setFontSize(10.5); doc.text('Bastian Espinoza',188,122,{align:'right'}); doc.text('+56959355607',188,129,{align:'right'});
   doc.save('tarjeta-cambio-aceite-bgarage.pdf');
 }
 
 function repairPDF(id){
   const r = state.repairs.find(x => x._id === id); const doc = pdfBase('Informe de historial'); let y = 44;
-  doc.setFontSize(10); doc.setTextColor(70,80,84); doc.text('Resumen profesional del servicio realizado. Costos internos ocultos para el cliente.',14,y); y += 8;
-  y = pdfSection(doc,'1','Datos del vehículo',y);
+  doc.setFontSize(10); doc.setTextColor(70,80,84); doc.text('Resumen profesional del servicio realizado y respaldo digital del vehículo.',14,y); y += 8;
+  y = pdfSection(doc,'🚗','Datos del vehículo',y);
   y = pdfInfoRow(doc,'Cliente', r.vehicle?.ownerName || '', y);
   y = pdfInfoRow(doc,'Vehículo', `${r.vehicle?.brand || ''} ${r.vehicle?.model || ''}`.trim(), y);
   y = pdfInfoRow(doc,'Patente', r.vehicle?.plate || '', y);
   y = pdfInfoRow(doc,'Trabajo', r.title || '', y);
   y = pdfInfoRow(doc,'Estado', String(r.status || '').replace('_',' '), y);
-  y += 3; y = pdfSection(doc,'2','Diagnóstico inicial',y); doc.setFontSize(10.5); doc.setTextColor(35,45,55); y = pdfTextBlock(doc, r.diagnosis || 'Sin diagnóstico registrado.',18,y,174);
-  y = ensurePage(doc,y,'Informe'); y = pdfSection(doc,'3','Trabajos realizados',y); y = pdfTextBlock(doc, r.workDone || 'Sin trabajos registrados.',18,y,174);
-  y = ensurePage(doc,y,'Informe'); y = pdfSection(doc,'4','Repuestos instalados',y);
+  y += 3; y = pdfSection(doc,'🔎','Diagnóstico inicial',y); doc.setFontSize(10.5); doc.setTextColor(35,45,55); y = pdfTextBlock(doc, r.diagnosis || 'Sin diagnóstico registrado.',18,y,174);
+  y = ensurePage(doc,y,'Informe de historial'); y = pdfSection(doc,'🔧','Trabajos realizados',y); y = pdfTextBlock(doc, r.workDone || 'Sin trabajos registrados.',18,y,174);
+  y = ensurePage(doc,y,'Informe de historial'); y = pdfSection(doc,'⚙','Repuestos instalados',y);
   const parts = r.partsChanged || [];
   if(!parts.length){ doc.setTextColor(70,80,84); doc.text('Sin repuestos registrados.',18,y); y += 8; }
-  parts.forEach((p,idx) => { y = ensurePage(doc,y,'Informe'); doc.setFillColor(245,251,252); doc.roundedRect(16,y-5,178,11,2,2,'F'); doc.setTextColor(25,35,40); doc.setFont(undefined,'bold'); doc.text(`${idx+1}. ${p.name || 'Repuesto'}`,20,y+2); doc.setTextColor(25,184,200); doc.text('Instalado',190,y+2,{align:'right'}); doc.setFont(undefined,'normal'); y += 14; });
-  y += 3; y = ensurePage(doc,y,'Informe'); y = pdfSection(doc,'5','Observaciones y códigos',y); y = pdfTextBlock(doc, r.extraProblems || 'Sin observaciones adicionales.',18,y,174);
-  y = ensurePage(doc,y,'Informe'); doc.setFillColor(235,250,252); doc.roundedRect(14,y,182,17,4,4,'F'); doc.setTextColor(9,102,113); doc.setFont(undefined,'bold'); doc.setFontSize(11); doc.text('Resumen cliente',20,y+7); doc.setTextColor(45,60,65); doc.setFont(undefined,'normal'); doc.setFontSize(9); doc.text('Informe generado digitalmente por BGarage para respaldar el historial del vehículo.',20,y+13);
+  parts.forEach((p,idx) => { y = ensurePage(doc,y,'Informe de historial'); doc.setFillColor(245,251,252); doc.roundedRect(16,y-5,178,11,2,2,'F'); doc.setTextColor(25,35,40); doc.setFont(undefined,'bold'); doc.text(`${p.name || 'Repuesto'}`,20,y+2); doc.setTextColor(25,184,200); doc.text('Instalado',190,y+2,{align:'right'}); doc.setFont(undefined,'normal'); y += 14; });
+  y += 3; y = ensurePage(doc,y,'Informe de historial'); y = pdfSection(doc,'📝','Observaciones y códigos',y); y = pdfTextBlock(doc, r.extraProblems || 'Sin observaciones adicionales.',18,y,174);
+  y = ensurePage(doc,y,'Informe de historial'); doc.setFillColor(235,250,252); doc.roundedRect(14,y,182,17,4,4,'F'); doc.setTextColor(9,102,113); doc.setFont(undefined,'bold'); doc.setFontSize(11); doc.text('Resumen cliente',20,y+7); doc.setTextColor(45,60,65); doc.setFont(undefined,'normal'); doc.setFontSize(9); doc.text('Informe generado digitalmente por BGarage para respaldar el historial del vehículo.',20,y+13);
   pdfFooter(doc); doc.save(`informe-historial-bgarage-${r.vehicle?.plate || 'vehiculo'}.pdf`);
 }
 
