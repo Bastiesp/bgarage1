@@ -156,6 +156,16 @@ const crud = (Model) => ({
   remove: asyncHandler(async (req, res) => {
     const doc = await Model.findByIdAndDelete(req.params.id);
     if (!doc) return res.status(404).json({ error: 'No encontrado' });
+
+    if (Model.modelName === 'Vehicle') {
+      const repairs = await Repair.find({ vehicle: req.params.id }).select('_id');
+      const repairIds = repairs.map(r => r._id);
+      await ServiceReminder.deleteMany({ $or: [{ vehicle: req.params.id }, { repair: { $in: repairIds } }] });
+      await Repair.deleteMany({ vehicle: req.params.id });
+      await OilCard.deleteMany({ vehicle: req.params.id });
+      await Quote.deleteMany({ vehicle: req.params.id });
+    }
+
     if (Model.modelName === 'Repair') await ServiceReminder.deleteMany({ repair: req.params.id });
     if (Model.modelName === 'OilCard') await ServiceReminder.deleteMany({ oilCard: req.params.id });
     res.json({ ok: true });
@@ -178,33 +188,46 @@ for (const [base, Model] of [
 }
 
 router.post('/repairs/:id/photos', upload.array('photos', 8), asyncHandler(async (req, res) => {
-  if (!cloudinaryEnabled) return res.status(400).json({ error: 'Cloudinary no configurado' });
-
   const repair = await Repair.findById(req.params.id);
   if (!repair) return res.status(404).json({ error: 'Informe no encontrado' });
+  if (!req.files || !req.files.length) return res.status(400).json({ error: 'Selecciona al menos una foto' });
 
   const uploaded = [];
   for (const file of req.files || []) {
-    const compressed = await sharp(file.buffer)
-      .rotate()
-      .resize({ width: 1400, withoutEnlargement: true })
-      .jpeg({ quality: 72 })
-      .toBuffer();
+    try {
+      const compressed = await sharp(file.buffer)
+        .rotate()
+        .resize({ width: 1400, withoutEnlargement: true })
+        .jpeg({ quality: 72 })
+        .toBuffer();
 
-    const result = await new Promise((resolve, reject) => {
-      const stream = cloudinary.uploader.upload_stream(
-        { folder: 'bgarage/repairs', resource_type: 'image' },
-        (err, r) => err ? reject(err) : resolve(r)
-      );
-      stream.end(compressed);
-    });
-
-    uploaded.push({ url: result.secure_url, publicId: result.public_id, caption: '' });
+      if (cloudinaryEnabled) {
+        const result = await new Promise((resolve, reject) => {
+          const stream = cloudinary.uploader.upload_stream(
+            { folder: 'bgarage/repairs', resource_type: 'image' },
+            (err, r) => err ? reject(err) : resolve(r)
+          );
+          stream.end(compressed);
+        });
+        uploaded.push({ url: result.secure_url, publicId: result.public_id, caption: '' });
+      } else {
+        // Fallback para no bloquear el uso si Cloudinary aún no está configurado.
+        // Guarda la imagen comprimida como data URL en MongoDB. Para producción con muchas fotos, conviene Cloudinary.
+        uploaded.push({
+          url: `data:image/jpeg;base64,${compressed.toString('base64')}`,
+          publicId: `local-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          caption: ''
+        });
+      }
+    } catch (err) {
+      console.error('Error procesando foto:', err);
+      return res.status(500).json({ error: 'No se pudo procesar una foto. Prueba con una imagen JPG/PNG más liviana.' });
+    }
   }
 
   repair.photos.push(...uploaded);
   await repair.save();
-  res.json({ ok: true, photos: uploaded, repair });
+  res.json({ ok: true, photos: uploaded, repair, storage: cloudinaryEnabled ? 'cloudinary' : 'mongodb-local' });
 }));
 
 router.get('/dashboard/summary', asyncHandler(async (req, res) => {
