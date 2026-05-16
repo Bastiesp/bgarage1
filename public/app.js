@@ -247,8 +247,52 @@ function repairForm(id){
   );
 }
 function photoForm(id){
-  openModal(`<h2>Subir fotos comprimidas</h2><p class="muted">Se comprimen antes de guardarlas. Si Cloudinary está configurado se suben a Cloudinary; si no, quedan guardadas comprimidas en la base de datos.</p><form id="pf"><input type="file" name="photos" accept="image/*" multiple><div class="actions"><button>Subir</button><button type="button" class="ghost" onclick="closeModal()">Cerrar</button></div></form>`);
-  $('#pf').onsubmit = async e => { e.preventDefault(); try{ const fd = new FormData(e.target); const r = await fetch('/api/repairs/' + id + '/photos', { method:'POST', headers:{ Authorization:'Bearer ' + token }, body:fd }); const j = await r.json().catch(()=>({})); if(!r.ok) throw new Error(j.error || 'Error al subir fotos'); closeModal(); await loadAll(); renderRepairs(); }catch(err){ showError(err); } };
+  openModal(`<h2>Subir fotos comprimidas</h2><p class="muted">Se comprimen antes de guardarlas. Si Cloudinary está configurado se suben a Cloudinary; si no, quedan guardadas comprimidas en la base de datos.</p><form id="pf"><input type="file" name="photos" accept="image/*" multiple><div class="upload-status" id="uploadStatus"><div class="upload-track"><div class="upload-fill" id="uploadFill"></div></div><p id="uploadText">Esperando fotos...</p></div><div class="actions"><button id="uploadBtn">Subir</button><button type="button" class="ghost" onclick="closeModal()">Cerrar</button></div></form>`);
+  $('#pf').onsubmit = e => {
+    e.preventDefault();
+    const fileInput = e.target.querySelector('input[type="file"]');
+    if(!fileInput.files.length){ alert('Selecciona al menos una foto.'); return; }
+    const fd = new FormData(e.target);
+    const fill = $('#uploadFill');
+    const text = $('#uploadText');
+    const btn = $('#uploadBtn');
+    btn.disabled = true;
+    text.textContent = 'Subiendo fotos... 0%';
+    fill.style.width = '0%';
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/repairs/' + id + '/photos');
+    xhr.setRequestHeader('Authorization', 'Bearer ' + token);
+    xhr.upload.onprogress = ev => {
+      if(ev.lengthComputable){
+        const pct = Math.max(1, Math.round((ev.loaded / ev.total) * 100));
+        fill.style.width = pct + '%';
+        text.textContent = `Subiendo fotos... ${pct}%`;
+      } else {
+        fill.style.width = '55%';
+        text.textContent = 'Subiendo fotos...';
+      }
+    };
+    xhr.onload = async () => {
+      let j = {}; try{ j = JSON.parse(xhr.responseText || '{}'); }catch(_){ }
+      if(xhr.status >= 200 && xhr.status < 300){
+        fill.style.width = '100%';
+        text.textContent = `Foto subida correctamente. ${j.photos?.length || fileInput.files.length} archivo(s) guardado(s).`;
+        btn.disabled = false;
+        await loadAll();
+        setTimeout(()=>{ closeModal(); renderRepairs(); }, 900);
+      } else {
+        btn.disabled = false;
+        text.textContent = j.error || 'Error al subir fotos';
+        alert(j.error || 'Error al subir fotos');
+      }
+    };
+    xhr.onerror = () => {
+      btn.disabled = false;
+      text.textContent = 'Error de conexión al subir fotos.';
+      alert('Error de conexión al subir fotos.');
+    };
+    xhr.send(fd);
+  };
 }
 
 
@@ -408,7 +452,11 @@ function quoteTableHeader(doc,y){
 
 function quotePDF(id){
   const q = state.quotes.find(x => x._id === id); const num = quoteNumberDisplay(q); const doc = pdfBase('Presupuesto de reparación'); let y = 44;
-  doc.setFontSize(10); doc.setTextColor(70,80,84); doc.text(`Presupuesto N° ${num} · Documento técnico-comercial emitido por BGarage para revisión y aprobación del cliente.`,14,y); y += 8;
+  // Número de presupuesto arriba a la derecha, justo sobre el título del documento.
+  doc.setFont(undefined,'bold'); doc.setFontSize(10.5); doc.setTextColor(10,10,10);
+  doc.text(`N° ${num}`,196,11,{align:'right'});
+  doc.setFont(undefined,'normal');
+  doc.setFontSize(10); doc.setTextColor(70,80,84); doc.text('Documento técnico-comercial emitido por BGarage para revisión y aprobación del cliente.',14,y); y += 8;
   y = pdfSection(doc,'👤','Datos del cliente y vehículo',y);
   y = pdfInfoRow(doc,'Cliente', q.ownerName || '', y);
   y = pdfInfoRow(doc,'Vehículo', q.vehicleLabel || '', y);

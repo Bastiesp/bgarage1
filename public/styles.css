@@ -74,3 +74,11 @@ button.danger:hover,
 .kanban-actions button{
   padding: 9px 10px;
 }
+
+.upload-status{display:block;margin:12px 0;padding:12px;border:1px solid #d8eef2;border-radius:16px;background:#f6fbfc}
+.upload-track{height:14px;background:#e0edf0;border-radius:999px;overflow:hidden;border:1px solid #cfe3e7}
+.upload-fill{height:100%;width:0%;background:linear-gradient(90deg,var(--c),var(--ok));border-radius:999px;transition:width .18s ease}
+.upload-status p{margin:8px 0 0;color:var(--muted);font-weight:700}
+.auth-note{font-size:13px;color:var(--muted);background:#f3fbfc;border:1px solid #d8eef2;border-radius:14px;padding:10px;margin:14px 0 8px}
+.created-by{margin-top:14px;color:#4d646b;font-size:13px}
+.created-by b{color:#111}
