@@ -3,6 +3,7 @@ const repairSchema = new mongoose.Schema({
   vehicle: { type: mongoose.Schema.Types.ObjectId, ref: 'Vehicle', required: true },
   title: { type: String, required: true },
   status: { type: String, enum: ['presupuestado','en_reparacion','entregado'], default: 'presupuestado' },
+  repairDate: { type: Date, default: Date.now },
   week: String,
   diagnosis: String,
   workDone: String,
@@ -22,6 +23,7 @@ repairSchema.pre('save', function(next){
   const partsCost = (this.partsChanged||[]).reduce((s,p)=>s+Number(p.cost||0),0);
   this.totalCost = partsCost + Number(this.externalCosts||0);
   this.profit = Number(this.totalCharged||0) - this.totalCost;
+  if (!this.repairDate) this.repairDate = new Date();
   if (!this.statusChangedAt) this.statusChangedAt = new Date();
   if (this.status === 'entregado' && !this.deliveredAt) this.deliveredAt = new Date();
   next();
