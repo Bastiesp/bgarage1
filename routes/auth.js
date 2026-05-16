@@ -9,7 +9,18 @@ function sign(user){ return jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
 
 router.post('/register', async (req,res)=>{
   try{
-    const { name, email, password } = req.body;
+    const { name, email, password, registrationCode } = req.body;
+    const totalUsers = await User.countDocuments();
+    const registrationOpen = String(process.env.REGISTRATION_OPEN || 'false').toLowerCase() === 'true';
+    const configuredCode = String(process.env.REGISTRATION_CODE || '').trim();
+    const codeOk = configuredCode && String(registrationCode || '').trim() === configuredCode;
+
+    // Seguridad: si ya existe al menos un usuario, el registro queda cerrado por defecto.
+    // Para habilitar nuevos usuarios: REGISTRATION_OPEN=true o definir REGISTRATION_CODE y entregarlo solo a quien corresponda.
+    if(totalUsers > 0 && !registrationOpen && !codeOk){
+      return res.status(403).json({error:'Registro cerrado. Solo el administrador puede habilitar nuevos usuarios.'});
+    }
+
     if(!name || !email || !password) return res.status(400).json({error:'Nombre, email y contraseña requeridos'});
     if(password.length < 8) return res.status(400).json({error:'La contraseña debe tener mínimo 8 caracteres'});
     const exists = await User.findOne({ email: String(email).toLowerCase() });
