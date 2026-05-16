@@ -9,6 +9,7 @@ const norm = v => String(v || '').toLowerCase().normalize('NFD').replace(/[\u030
 
 let state = { vehicles:[], repairs:[], quotes:[], oil:[], services:[], summary:null };
 let filters = { dashboard:'', kanban:'', vehicles:'', quotes:'', oil:'', repairs:'', fichas:'', services:'', commercial:'' };
+let dateFilters = { repairsFrom:'', repairsTo:'' };
 let kanbanExpanded = new Set();
 
 const api = async (url, opts={}) => {
@@ -63,11 +64,24 @@ function searchBox(view, label='Buscar por cliente, patente, marca o modelo'){
   return `<div class="searchbar"><span>🔎</span><input value="${safe(filters[view] || '')}" oninput="filters.${view}=this.value; render('${view}')" placeholder="${label}"></div>`;
 }
 function vehicleText(v){ return norm([v?.ownerName, v?.ownerPhone, v?.ownerEmail, v?.plate, v?.brand, v?.model, v?.year, v?.currentKm].join(' ')); }
-function repairText(r){ return norm([r?.title, r?.status, r?.week, r?.vehicle?.ownerName, r?.vehicle?.plate, r?.vehicle?.brand, r?.vehicle?.model, r?.vehicle?.ownerPhone, r?.diagnosis, r?.workDone].join(' ')); }
+function repairText(r){ return norm([r?.title, r?.status, r?.week, dateCL(r?.repairDate), dateCL(r?.deliveredAt), dateCL(r?.createdAt), r?.vehicle?.ownerName, r?.vehicle?.plate, r?.vehicle?.brand, r?.vehicle?.model, r?.vehicle?.ownerPhone, r?.diagnosis, r?.workDone].join(' ')); }
 function quoteText(q){ return norm([q?.ownerName, q?.vehicleLabel, ...(q?.items || []).map(i => i.description)].join(' ')); }
 function oilText(o){ return norm([o?.ownerName, o?.brand, o?.model, o?.year, o?.currentKm, o?.nextKm, o?.oilUsed].join(' ')); }
 function serviceText(x){ return norm([x?.serviceType, x?.summary, x?.status, x?.vehicle?.ownerName, x?.vehicle?.ownerPhone, x?.vehicle?.plate, x?.vehicle?.brand, x?.vehicle?.model, x?.dueKm, x?.notes].join(' ')); }
 function filterList(list, view, fn){ const q = norm(filters[view]); return q ? list.filter(x => fn(x).includes(q)) : list; }
+function filterRepairsByDate(list){
+  const from = dateFilters.repairsFrom ? new Date(dateFilters.repairsFrom + 'T00:00:00') : null;
+  const to = dateFilters.repairsTo ? new Date(dateFilters.repairsTo + 'T23:59:59') : null;
+  return list.filter(r => {
+    const d = new Date(r.repairDate || r.deliveredAt || r.createdAt || Date.now());
+    if(from && d < from) return false;
+    if(to && d > to) return false;
+    return true;
+  });
+}
+function repairDateControls(){
+  return `<div class="date-filters"><label>Desde <input type="date" value="${safe(dateFilters.repairsFrom)}" onchange="dateFilters.repairsFrom=this.value; render('repairs')"></label><label>Hasta <input type="date" value="${safe(dateFilters.repairsTo)}" onchange="dateFilters.repairsTo=this.value; render('repairs')"></label><button class="ghost mini" onclick="dateFilters.repairsFrom=''; dateFilters.repairsTo=''; render('repairs')">Limpiar fechas</button></div>`;
+}
 
 async function render(view='dashboard'){
   if(view === 'dashboard') return renderDashboard();
@@ -130,7 +144,7 @@ function renderKanban(){
     const details = expanded ? `<div class="kanban-details"><p>${safe(r.vehicle?.brand || '')} ${safe(r.vehicle?.model || '')}</p><p class="muted">Fecha ingreso: ${dateCL(r.createdAt)}</p><p class="muted">Último movimiento: ${dateCL(r.statusChangedAt || r.updatedAt || r.createdAt)}</p><p class="status-line">${badge(r.status)} <span>Utilidad: <b>${money(r.profit)}</b></span></p></div>` : '';
     return `<div class="card kanban-card ${expanded ? 'expanded' : 'compact'}">${carStatusIcon(r.status)}<h3>${safe(r.vehicle?.plate || 'Sin patente')}</h3><p class="kanban-title">${safe(r.title)}</p><p class="kanban-client">${safe(r.vehicle?.ownerName || '')}</p>${details}<div class="kanban-actions"><button class="ghost mini" onclick="toggleKanbanCard('${r._id}')">${expanded ? 'Reducir' : 'Ampliar'}</button><select onchange="moveRepair('${r._id}',this.value)"><option>mover a...</option><option value="presupuestado">Presupuestado</option><option value="en_reparacion">En reparación</option><option value="entregado">Entregado</option></select><button class="ghost mini" onclick="repairForm('${r._id}')">Ver / editar</button><button class="ghost danger mini" onclick="deleteRecord('/repairs/${r._id}','este informe del Kanban / historial',renderKanban)">Eliminar</button></div></div>`;
   };
-  $('#content').innerHTML = `<div class="top"><h1>Kanban de reparaciones</h1><button onclick="repairForm()">+ Nuevo informe</button></div>${searchBox('kanban')}<div class="kanban">${cols.map(([key,title]) => `<div class="col"><h2>${title}</h2>${repairs.filter(r => r.status === key).map(card).join('')}</div>`).join('')}</div>`;
+  $('#content').innerHTML = `<div class="top"><h1>Kanban de reparaciones</h1><button class="add-only" title="Nuevo" onclick="repairForm()">+</button></div>${searchBox('kanban')}<div class="kanban">${cols.map(([key,title]) => `<div class="col"><h2>${title}</h2>${repairs.filter(r => r.status === key).map(card).join('')}</div>`).join('')}</div>`;
 }
 function toggleKanbanCard(id){
   id = String(id);
@@ -138,11 +152,21 @@ function toggleKanbanCard(id){
   else kanbanExpanded.add(id);
   renderKanban();
 }
-async function moveRepair(id,status){ if(!status || status === 'mover a...') return; await api('/repairs/' + id, { method:'PUT', body:JSON.stringify({status, statusChangedAt:new Date().toISOString()}) }); await loadAll(); renderKanban(); }
+async function moveRepair(id,status){
+  if(!status || status === 'mover a...') return;
+  try{
+    const payload = { status, statusChangedAt:new Date().toISOString() };
+    if(status === 'entregado'){ payload.deliveredAt = new Date().toISOString(); payload.repairDate = new Date().toISOString(); }
+    await api('/repairs/' + id, { method:'PUT', body:JSON.stringify(payload) });
+    await loadAll();
+    renderKanban();
+    if(status === 'entregado') alert('Vehículo marcado como entregado. El informe de reparación queda disponible automáticamente en Reparaciones y en la ficha del vehículo.');
+  }catch(err){ showError(err); }
+}
 
 function renderQuotes(){
   const quotes = filterList(state.quotes, 'quotes', quoteText);
-  $('#content').innerHTML = `<div class="top"><h1>Presupuestos</h1><button onclick="quoteForm()">+ Presupuesto</button></div>${searchBox('quotes')}${table(quotes.map(q => [`N° ${quoteNumberDisplay(q)}`, safe(q.ownerName), safe(q.vehicleLabel), badge(q.status), money(q.total), `<button onclick="quotePDF('${q._id}')">PDF</button> <button class="ghost" onclick="quoteForm('${q._id}')">Editar</button> <button class="ghost danger" onclick="deleteRecord('/quotes/${q._id}','este presupuesto',renderQuotes)">Eliminar</button>`]), ['N°','Cliente','Vehículo','Estado','Total',''])}`;
+  $('#content').innerHTML = `<div class="top"><h1>Presupuestos</h1><button class="add-only" title="Nuevo presupuesto" onclick="quoteForm()">+</button></div>${searchBox('quotes')}${table(quotes.map(q => [`N° ${quoteNumberDisplay(q)}`, safe(q.ownerName), safe(q.vehicleLabel), badge(q.status), money(q.total), `<button onclick="previewQuote('${q._id}')">Ver PDF</button> <button class="ghost" onclick="quotePDF('${q._id}')">Descargar</button> <button class="ghost" onclick="quoteForm('${q._id}')">Editar</button> <button class="ghost danger" onclick="deleteRecord('/quotes/${q._id}','este presupuesto',renderQuotes)">Eliminar</button>`]), ['N°','Cliente','Vehículo','Estado','Total',''])}`;
 }
 function quoteItemRow(description='', brief='', price=''){
   return `<div class="quote-item-row"><input name="itemDescription" placeholder="Item" value="${safe(description)}"><input name="itemBrief" placeholder="Breve descripción" value="${safe(brief)}"><input name="itemPrice" type="number" placeholder="Precio" value="${safe(price)}" oninput="recalcQuoteTotal()"><button type="button" class="ghost mini" onclick="this.closest('.quote-item-row').remove(); recalcQuoteTotal();">Quitar</button></div>`;
@@ -225,14 +249,28 @@ function fillOilVehicle(select){
 }
 
 function renderRepairs(){
-  const repairs = filterList(state.repairs, 'repairs', repairText);
-  $('#content').innerHTML = `<div class="top"><h1>Reparaciones / Historial</h1><button onclick="repairForm()">+ Nuevo informe</button></div>${searchBox('repairs')}${table(repairs.map(r => [safe(r.vehicle?.ownerName || ''), safe(r.vehicle?.plate || ''), safe(r.title), badge(r.status), money(r.totalCharged), money(r.profit), `<button onclick="repairPDF('${r._id}')">PDF</button> <button class="ghost" onclick="repairForm('${r._id}')">Editar</button> <button class="ghost" onclick="photoForm('${r._id}')">Fotos</button> <button class="ghost danger" onclick="deleteRecord('/repairs/${r._id}','este informe de historial',renderRepairs)">Eliminar</button>`]), ['Cliente','Patente','Trabajo','Estado','Cobrado','Utilidad',''])}`;
+  const repairs = filterRepairsByDate(filterList(state.repairs, 'repairs', repairText));
+  $('#content').innerHTML = `<div class="top"><div><h1>Reparaciones</h1><p class="muted">Listado de reparaciones e informes descargables para respaldo del cliente.</p></div><button class="add-only" title="Nuevo informe" onclick="repairForm()">+</button></div>${searchBox('repairs')}${repairDateControls()}${table(repairs.map(r => [dateCL(r.repairDate || r.deliveredAt || r.createdAt), safe(r.vehicle?.ownerName || ''), safe(r.vehicle?.plate || ''), safe(r.title), badge(r.status), money(r.totalCharged), money(r.profit), `<button onclick="previewRepair('${r._id}')">Ver informe</button> <button class="ghost" onclick="repairPDF('${r._id}')">PDF</button> <button class="ghost" onclick="repairForm('${r._id}')">Editar</button> <button class="ghost" onclick="photoForm('${r._id}')">Fotos</button> <button class="ghost danger" onclick="deleteRecord('/repairs/${r._id}','esta reparación',renderRepairs)">Eliminar</button>`]), ['Fecha','Cliente','Patente','Trabajo','Estado','Cobrado','Utilidad',''])}`;
 }
 function repairForm(id){
   const r = state.repairs.find(x => x._id === id) || {};
-  const options = state.vehicles.map(v => `<option value="${v._id}" ${String(r.vehicle?._id || r.vehicle || '') === String(v._id) ? 'selected' : ''}>${safe(v.ownerName || '')} · ${safe(v.plate || '')} · ${safe(v.brand || '')} ${safe(v.model || '')}</option>`).join('');
-  baseForm(id ? 'Editar informe' : 'Nuevo informe', `
-    <select name="vehicle" required><option value="">Seleccionar vehículo/cliente</option>${options}</select>
+  const currentVehicleId = String(r.vehicle?._id || r.vehicle || '');
+  const options = state.vehicles.map(v => `<option value="${v._id}" ${currentVehicleId === String(v._id) ? 'selected' : ''}>${safe(v.ownerName || '')} · ${safe(v.plate || '')} · ${safe(v.brand || '')} ${safe(v.model || '')}</option>`).join('');
+  const v = r.vehicle || {};
+  baseForm(id ? 'Editar reparación' : 'Nueva reparación', `
+    <div class="form-section-title">Cliente y vehículo</div>
+    <select name="vehicle" onchange="fillRepairVehicle(this)"><option value="">Escribir cliente manualmente o seleccionar existente</option>${options}</select>
+    <div class="manual-vehicle-grid">
+      <input name="manualOwnerName" placeholder="Nombre cliente" value="${safe(v.ownerName || '')}">
+      <input name="manualOwnerPhone" placeholder="Teléfono" value="${safe(v.ownerPhone || '')}">
+      <input name="manualPlate" placeholder="Patente" value="${safe(v.plate || '')}">
+      <input name="manualBrand" placeholder="Marca" value="${safe(v.brand || '')}">
+      <input name="manualModel" placeholder="Modelo" value="${safe(v.model || '')}">
+      <input name="manualYear" type="number" placeholder="Año" value="${safe(v.year || '')}">
+      <input name="manualCurrentKm" type="number" placeholder="KM actual" value="${safe(v.currentKm || '')}">
+    </div>
+    <div class="form-section-title">Datos de reparación</div>
+    <input name="repairDate" type="date" value="${r.repairDate ? new Date(r.repairDate).toISOString().slice(0,10) : new Date().toISOString().slice(0,10)}">
     <input name="title" placeholder="Título reparación" required value="${safe(r.title || '')}">
     <select name="status"><option value="presupuestado">Presupuestado</option><option value="en_reparacion" ${r.status === 'en_reparacion' ? 'selected' : ''}>En reparación</option><option value="entregado" ${r.status === 'entregado' ? 'selected' : ''}>Entregado</option></select>
     <input name="week" placeholder="Semana / fecha comprometida" value="${safe(r.week || '')}">
@@ -243,8 +281,44 @@ function repairForm(id){
     <input name="externalCosts" type="number" placeholder="Costos externos" value="${safe(r.externalCosts || '')}">
     <input name="totalCharged" type="number" placeholder="Total cobrado al cliente" value="${safe(r.totalCharged || '')}">
     <textarea name="partsText" placeholder="Repuestos: nombre | costo | precio venta"></textarea>`,
-    async e => { e.preventDefault(); try{ const d = formData(e.target); if(d.partsText){ d.partsChanged = d.partsText.split('\n').filter(Boolean).map(line => { const [name,cost,sellPrice] = line.split('|').map(x => x.trim()); return { name, cost:Number(cost || 0), sellPrice:Number(sellPrice || 0) }; }); delete d.partsText; } await api('/repairs' + (id ? '/' + id : ''), { method:id?'PUT':'POST', body:JSON.stringify(d) }); closeModal(); await loadAll(); renderRepairs(); }catch(err){ showError(err); } }
+    async e => {
+      e.preventDefault();
+      try{
+        const d = formData(e.target);
+        const manualVehicle = {
+          ownerName: d.manualOwnerName,
+          ownerPhone: d.manualOwnerPhone,
+          plate: d.manualPlate,
+          brand: d.manualBrand,
+          model: d.manualModel,
+          year: d.manualYear,
+          currentKm: d.manualCurrentKm
+        };
+        ['manualOwnerName','manualOwnerPhone','manualPlate','manualBrand','manualModel','manualYear','manualCurrentKm'].forEach(k => delete d[k]);
+        if(!d.vehicle){
+          if(!manualVehicle.ownerName) throw new Error('Selecciona un cliente existente o escribe el nombre del cliente.');
+          const createdVehicle = await api('/vehicles', { method:'POST', body:JSON.stringify(manualVehicle) });
+          d.vehicle = createdVehicle._id;
+        } else if(id) {
+          // Si se editan los datos manuales de un cliente existente, actualiza la ficha del vehículo.
+          const clean = Object.fromEntries(Object.entries(manualVehicle).filter(([_,val]) => val !== undefined && val !== ''));
+          if(Object.keys(clean).length) await api('/vehicles/' + d.vehicle, { method:'PUT', body:JSON.stringify(clean) });
+        }
+        if(d.partsText){ d.partsChanged = d.partsText.split('\n').filter(Boolean).map(line => { const [name,cost,sellPrice] = line.split('|').map(x => x.trim()); return { name, cost:Number(cost || 0), sellPrice:Number(sellPrice || 0) }; }); delete d.partsText; }
+        if(d.repairDate) d.repairDate = new Date(d.repairDate + 'T12:00:00').toISOString();
+        if(d.status === 'entregado' && !d.deliveredAt) d.deliveredAt = new Date().toISOString();
+        await api('/repairs' + (id ? '/' + id : ''), { method:id?'PUT':'POST', body:JSON.stringify(d) });
+        closeModal(); await loadAll(); renderRepairs();
+      }catch(err){ showError(err); }
+    }
   );
+}
+function fillRepairVehicle(select){
+  const vehicle = state.vehicles.find(v => String(v._id) === String(select.value));
+  if(!vehicle) return;
+  const form = select.closest('form');
+  const map = { manualOwnerName:vehicle.ownerName, manualOwnerPhone:vehicle.ownerPhone, manualPlate:vehicle.plate, manualBrand:vehicle.brand, manualModel:vehicle.model, manualYear:vehicle.year, manualCurrentKm:vehicle.currentKm };
+  for(const [name,val] of Object.entries(map)){ const el = form.querySelector(`[name="${name}"]`); if(el) el.value = val || ''; }
 }
 function photoForm(id){
   openModal(`<h2>Subir fotos comprimidas</h2><p class="muted">Se comprimen antes de guardarlas. Si Cloudinary está configurado se suben a Cloudinary; si no, quedan guardadas comprimidas en la base de datos.</p><form id="pf"><input type="file" name="photos" accept="image/*" multiple><div class="upload-status" id="uploadStatus"><div class="upload-track"><div class="upload-fill" id="uploadFill"></div></div><p id="uploadText">Esperando fotos...</p></div><div class="actions"><button id="uploadBtn">Subir</button><button type="button" class="ghost" onclick="closeModal()">Cerrar</button></div></form>`);
@@ -314,7 +388,7 @@ function serviceBadge(s){
 function vehicleMatchesText(v, q){ return vehicleText(v).includes(norm(q)); }
 function vehicleRelated(v){
   const vehicleLabel = norm([v.ownerName, v.plate, v.brand, v.model, v.year].join(' '));
-  const repairs = state.repairs.filter(r => String(r.vehicle?._id || r.vehicle) === String(v._id));
+  const repairs = state.repairs.filter(r => String(r.vehicle?._id || r.vehicle) === String(v._id)).sort((a,b) => new Date(b.repairDate || b.deliveredAt || b.createdAt || 0) - new Date(a.repairDate || a.deliveredAt || a.createdAt || 0));
   const quotes = state.quotes.filter(q => norm([q.ownerName, q.vehicleLabel].join(' ')).includes(norm(v.ownerName || '')) || norm(q.vehicleLabel || '').includes(norm(v.plate || '')));
   const oil = state.oil.filter(o => norm([o.ownerName,o.brand,o.model,o.year].join(' ')).includes(norm(v.ownerName || '')) || vehicleLabel.includes(norm([o.ownerName,o.brand,o.model].join(' '))));
   const services = state.services.filter(s => String(s.vehicle?._id || s.vehicle) === String(v._id));
@@ -336,8 +410,8 @@ function vehicleFicha(id){
     <div class="ficha-head"><div><h3>${safe(v.brand || '')} ${safe(v.model || '')} ${safe(v.year || '')}</h3><p><b>Cliente:</b> ${safe(v.ownerName || '')}</p><p><b>Teléfono:</b> ${safe(v.ownerPhone || '')}</p><p><b>KM actual:</b> ${safe(v.currentKm || '-')}</p></div><div class="actions ficha-actions">${whatsappButton(v,'general')}<button class="ghost" onclick="serviceForm('', '${v._id}')">+ Próx. servicio</button><button class="ghost" onclick="vehicleForm('${v._id}')">Editar datos</button></div></div>
     <div class="grid compact"><div class="card"><h3>Ingresos</h3><div class="stat">${money(totalIncome)}</div></div><div class="card"><h3>Costos</h3><div class="stat">${money(totalCost)}</div></div><div class="card"><h3>Utilidad</h3><div class="stat">${money(totalProfit)}</div></div></div>
     <h3>Próximos servicios</h3>${table(rel.services.map(s => [safe(s.serviceType), dateCL(s.dueDate), safe(s.dueKm || ''), serviceBadge(s), whatsappButton(v,'service',s)]), ['Servicio','Fecha','KM','Estado','WhatsApp'])}
-    <h3>Historial de reparaciones</h3>${table(rel.repairs.map(r => [dateCL(r.deliveredAt || r.createdAt), safe(r.title), badge(r.status), money(r.totalCharged), money(r.totalCost), money(r.profit), `<button onclick="repairPDF('${r._id}')">PDF</button>`]), ['Fecha','Trabajo','Estado','Cobrado','Costo','Utilidad',''])}
-    <h3>Presupuestos</h3>${table(rel.quotes.map(q => [dateCL(q.createdAt), `N° ${quoteNumberDisplay(q)}`, safe(q.vehicleLabel), badge(q.status), money(q.total), `<button onclick="quotePDF('${q._id}')">PDF</button>`]), ['Fecha','N°','Vehículo','Estado','Total',''])}
+    <h3>Historial de reparaciones</h3>${table(rel.repairs.map(r => [dateCL(r.deliveredAt || r.createdAt), safe(r.title), badge(r.status), money(r.totalCharged), money(r.totalCost), money(r.profit), `<button onclick="previewRepair('${r._id}')">Ver</button> <button class="ghost" onclick="repairPDF('${r._id}')">PDF</button>`]), ['Fecha','Trabajo','Estado','Cobrado','Costo','Utilidad',''])}
+    <h3>Presupuestos</h3>${table(rel.quotes.map(q => [dateCL(q.createdAt), `N° ${quoteNumberDisplay(q)}`, safe(q.vehicleLabel), badge(q.status), money(q.total), `<button onclick="previewQuote('${q._id}')">Ver</button> <button class="ghost" onclick="quotePDF('${q._id}')">PDF</button>`]), ['Fecha','N°','Vehículo','Estado','Total',''])}
     <h3>Tarjetas aceite</h3>${table(rel.oil.map(o => [dateCL(o.date || o.createdAt), safe(o.oilUsed), safe(o.currentKm), safe(o.nextKm), `<button onclick="oilPDF('${o._id}')">PDF</button> <button class="ghost danger" onclick="deleteRecord('/oil-cards/${o._id}','esta tarjeta de cambio de aceite',renderOil)">Eliminar</button>`]), ['Fecha','Aceite','KM actual','Próximo KM',''])}
     <h3>Fotos de respaldo</h3><div class="photo-row">${photos.length ? photos.map(p => `<a href="${safe(p.url)}" target="_blank"><img src="${safe(p.url)}" title="${safe(p.repairTitle)}"></a>`).join('') : '<p class="muted">Sin fotos registradas.</p>'}</div>
     <div class="actions"><button type="button" class="ghost" onclick="closeModal()">Cerrar</button></div>`);
@@ -450,7 +524,7 @@ function quoteTableHeader(doc,y){
   doc.text('ITEM',20,y+6); doc.text('DESCRIPCIÓN',62,y+6); doc.text('PRECIO',190,y+6,{align:'right'}); doc.setFont(undefined,'normal'); return y + 14;
 }
 
-function quotePDF(id){
+function quotePDFDoc(id){
   const q = state.quotes.find(x => x._id === id); const num = quoteNumberDisplay(q); const doc = pdfBase('Presupuesto de reparación'); let y = 44;
   // Número de presupuesto arriba a la derecha, justo sobre el título del documento.
   doc.setFont(undefined,'bold'); doc.setFontSize(10.5); doc.setTextColor(10,10,10);
@@ -482,8 +556,11 @@ function quotePDF(id){
   doc.setFont(undefined,'normal');
   y += 28; if(y > 255){ pdfFooter(doc); doc.addPage(); pdfHeader(doc,'Presupuesto de reparación'); y = 54; }
   doc.setDrawColor(150,180,185); doc.line(126,y,190,y); doc.setTextColor(9,102,113); doc.setFont(undefined,'bold'); doc.setFontSize(10); doc.text('Bastian Espinoza',158,y+7,{align:'center'}); doc.setFont(undefined,'normal'); doc.setFontSize(9); doc.text('Responsable BGarage',158,y+12,{align:'center'});
-  pdfFooter(doc); doc.save(`presupuesto-bgarage-${num}-${q.ownerName || 'cliente'}.pdf`);
+  pdfFooter(doc);
+  return { doc, filename:`presupuesto-bgarage-${num}-${q.ownerName || 'cliente'}.pdf` };
 }
+function quotePDF(id){ const out = quotePDFDoc(id); out.doc.save(out.filename); }
+function previewQuote(id){ const out = quotePDFDoc(id); previewPdf(out.doc, out.filename); }
 
 function oilPDF(id){
   const o = state.oil.find(x => x._id === id); const { jsPDF } = window.jspdf; const doc = new jsPDF({ orientation:'landscape', unit:'mm', format:'a5' });
@@ -518,24 +595,33 @@ function oilPDF(id){
   doc.save('tarjeta-cambio-aceite-bgarage.pdf');
 }
 
-function repairPDF(id){
-  const r = state.repairs.find(x => x._id === id); const doc = pdfBase('Informe de historial'); let y = 44;
+
+function previewPdf(doc, filename='documento-bgarage.pdf'){
+  const url = doc.output('bloburl');
+  openModal(`<div class="preview-head"><h2>${safe(filename)}</h2><button type="button" onclick="closeModal()" class="ghost">Cerrar</button></div><iframe class="pdf-preview" src="${url}"></iframe><div class="actions"><button onclick="window.open('${url}','_blank')">Abrir en otra pestaña</button></div>`);
+}
+function repairPDFDoc(id){
+  const r = state.repairs.find(x => x._id === id); const doc = pdfBase('Informe de reparación'); let y = 44;
   doc.setFontSize(10); doc.setTextColor(70,80,84); doc.text('Resumen profesional del servicio realizado y respaldo digital del vehículo.',14,y); y += 8;
   y = pdfSection(doc,'🚗','Datos del vehículo',y);
   y = pdfInfoRow(doc,'Cliente', r.vehicle?.ownerName || '', y);
   y = pdfInfoRow(doc,'Vehículo', `${r.vehicle?.brand || ''} ${r.vehicle?.model || ''}`.trim(), y);
   y = pdfInfoRow(doc,'Patente', r.vehicle?.plate || '', y);
   y = pdfInfoRow(doc,'Trabajo', r.title || '', y);
+  y = pdfInfoRow(doc,'Fecha reparación', dateCL(r.repairDate || r.deliveredAt || r.createdAt), y);
   y = pdfInfoRow(doc,'Estado', String(r.status || '').replace('_',' '), y);
   y += 3; y = pdfSection(doc,'🔎','Diagnóstico inicial',y); doc.setFontSize(10.5); doc.setTextColor(35,45,55); y = pdfTextBlock(doc, r.diagnosis || 'Sin diagnóstico registrado.',18,y,174);
-  y = ensurePage(doc,y,'Informe de historial'); y = pdfSection(doc,'🔧','Trabajos realizados',y); y = pdfTextBlock(doc, r.workDone || 'Sin trabajos registrados.',18,y,174);
-  y = ensurePage(doc,y,'Informe de historial'); y = pdfSection(doc,'⚙','Repuestos instalados',y);
+  y = ensurePage(doc,y,'Informe de reparación'); y = pdfSection(doc,'🔧','Trabajos realizados',y); y = pdfTextBlock(doc, r.workDone || 'Sin trabajos registrados.',18,y,174);
+  y = ensurePage(doc,y,'Informe de reparación'); y = pdfSection(doc,'⚙','Repuestos instalados',y);
   const parts = r.partsChanged || [];
   if(!parts.length){ doc.setTextColor(70,80,84); doc.text('Sin repuestos registrados.',18,y); y += 8; }
-  parts.forEach((p,idx) => { y = ensurePage(doc,y,'Informe de historial'); doc.setFillColor(245,251,252); doc.roundedRect(16,y-5,178,11,2,2,'F'); doc.setTextColor(25,35,40); doc.setFont(undefined,'bold'); doc.text(`${p.name || 'Repuesto'}`,20,y+2); doc.setTextColor(25,184,200); doc.text('Instalado',190,y+2,{align:'right'}); doc.setFont(undefined,'normal'); y += 14; });
-  y += 3; y = ensurePage(doc,y,'Informe de historial'); y = pdfSection(doc,'📝','Observaciones y códigos',y); y = pdfTextBlock(doc, r.extraProblems || 'Sin observaciones adicionales.',18,y,174);
-  y = ensurePage(doc,y,'Informe de historial'); doc.setFillColor(235,250,252); doc.roundedRect(14,y,182,17,4,4,'F'); doc.setTextColor(9,102,113); doc.setFont(undefined,'bold'); doc.setFontSize(11); doc.text('Resumen cliente',20,y+7); doc.setTextColor(45,60,65); doc.setFont(undefined,'normal'); doc.setFontSize(9); doc.text('Informe generado digitalmente por BGarage para respaldar el historial del vehículo.',20,y+13);
-  pdfFooter(doc); doc.save(`informe-historial-bgarage-${r.vehicle?.plate || 'vehiculo'}.pdf`);
+  parts.forEach((p,idx) => { y = ensurePage(doc,y,'Informe de reparación'); doc.setFillColor(245,251,252); doc.roundedRect(16,y-5,178,11,2,2,'F'); doc.setTextColor(25,35,40); doc.setFont(undefined,'bold'); doc.text(`${p.name || 'Repuesto'}`,20,y+2); doc.setTextColor(25,184,200); doc.text('Instalado',190,y+2,{align:'right'}); doc.setFont(undefined,'normal'); y += 14; });
+  y += 3; y = ensurePage(doc,y,'Informe de reparación'); y = pdfSection(doc,'📝','Observaciones y códigos',y); y = pdfTextBlock(doc, r.extraProblems || 'Sin observaciones adicionales.',18,y,174);
+  y = ensurePage(doc,y,'Informe de reparación'); doc.setFillColor(235,250,252); doc.roundedRect(14,y,182,17,4,4,'F'); doc.setTextColor(9,102,113); doc.setFont(undefined,'bold'); doc.setFontSize(11); doc.text('Resumen cliente',20,y+7); doc.setTextColor(45,60,65); doc.setFont(undefined,'normal'); doc.setFontSize(9); doc.text('Informe generado digitalmente por BGarage para respaldar el historial del vehículo.',20,y+13);
+  pdfFooter(doc);
+  return { doc, filename:`informe-reparacion-bgarage-${r.vehicle?.plate || 'vehiculo'}.pdf` };
 }
+function repairPDF(id){ const out = repairPDFDoc(id); out.doc.save(out.filename); }
+function previewRepair(id){ const out = repairPDFDoc(id); previewPdf(out.doc, out.filename); }
 
 window.addEventListener('DOMContentLoaded', async () => { try{ await loadAll(); nav('dashboard'); }catch(e){ showError(e); } });
